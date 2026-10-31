@@ -6,6 +6,7 @@ use crabefi_runtime_abi::{ValidatedImage, architecture};
 use sha2::{Digest, Sha256};
 
 fn main() {
+    embed_capsule_trust();
     let target = std::env::var("TARGET").unwrap_or_default();
     if std::env::var_os("CARGO_FEATURE_ENTRY64").is_some() && !target.starts_with("x86_64") {
         panic!("the entry64 feature is only supported on x86-64");
@@ -76,6 +77,26 @@ fn main() {
             std::env::var("PAYLOAD_BASE").unwrap_or_else(|_| "0x81000000".to_string());
         println!("cargo:rustc-link-arg-bin=crabefi=--defsym=PAYLOAD_BASE={payload_base}");
     }
+}
+
+/// Populate the existing CapsuleBackend trust-store hook. Unconfigured builds
+/// retain the empty trust store and reject all capsule signatures.
+fn embed_capsule_trust() {
+    println!("cargo:rerun-if-env-changed=CAPSULE_CERT_PATH");
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
+    let source = match std::env::var_os("CAPSULE_CERT_PATH") {
+        Some(path) if !path.is_empty() => {
+            let path = std::path::PathBuf::from(path);
+            println!("cargo:rerun-if-changed={}", path.display());
+            let certificate = std::fs::read(path).expect("read DER capsule trust certificate");
+            assert!(!certificate.is_empty(), "empty capsule trust certificate");
+            std::fs::write(out.join("capsule-cert.der"), certificate)
+                .expect("copy capsule trust certificate");
+            "&[include_bytes!(concat!(env!(\"OUT_DIR\"), \"/capsule-cert.der\"))]"
+        }
+        _ => "&[]",
+    };
+    std::fs::write(out.join("capsule_trust.rs"), source).expect("write capsule trust store");
 }
 
 fn embed_runtime_image(expected_architecture: u16) {

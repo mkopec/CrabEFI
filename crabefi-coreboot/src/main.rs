@@ -451,7 +451,7 @@ impl crabefi::CapsuleBackend for CorebootCapsuleBackend {
     }
 
     fn capsule_trust_store(&self) -> &[&[u8]] {
-        &[]
+        include!(concat!(env!("OUT_DIR"), "/capsule_trust.rs"))
     }
 
     fn write_firmware_region(

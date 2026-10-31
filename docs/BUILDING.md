@@ -108,6 +108,7 @@ map, symbols, disassembly, stack report, digest, and JSON audits are under
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `LOW_DEVICE_GB` | `1` | AArch64: gigabytes from address 0 mapped as Device memory. Boards with MMIO up to DRAM at 2 GiB (MediaTek) need `2`; the payload warns at boot when the Device range ends below the lowest RAM under 4 GiB. |
+| `CAPSULE_CERT_PATH` | unset | DER certificate trusted for signed firmware capsules. Unset leaves the trust store empty, so every capsule is rejected. Never embed the private key. |
 
 ### Build Configuration
 
