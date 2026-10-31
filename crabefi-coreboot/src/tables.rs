@@ -36,6 +36,7 @@ pub mod tags {
     pub const CB_TAG_CONSOLE: u32 = 0x0010;
     pub const CB_TAG_FORWARD: u32 = 0x0011;
     pub const CB_TAG_FRAMEBUFFER: u32 = 0x0012;
+    pub const CB_TAG_GPIO: u32 = 0x0013;
     pub const CB_TAG_TIMESTAMPS: u32 = 0x0016;
     pub const CB_TAG_CBMEM_CONSOLE: u32 = 0x0017;
     pub const CB_TAG_SPI_FLASH: u32 = 0x0029;
@@ -168,6 +169,16 @@ struct CbDevicetree {
     size: u32,
     fdt_pointer: u64,
     fdt_size: u32,
+}
+
+/// One `struct lb_gpio` of an LB_TAG_GPIO record.
+#[repr(C, packed)]
+#[derive(FromBytes, Immutable, KnownLayout, Unaligned, Clone, Copy)]
+struct CbGpio {
+    port: u32,
+    polarity: u32,
+    value: u32,
+    name: [u8; 16],
 }
 
 /// CBMEM reference (used for console, timestamps, etc.)
@@ -388,6 +399,20 @@ pub struct BootMediaInfo {
 
 /// Maximum number of capsules we track from coreboot tables
 pub const MAX_CAPSULES: usize = 32;
+/// Upper bound on GPIOs kept from LB_TAG_GPIO.
+pub const MAX_GPIOS: usize = 16;
+
+/// A board GPIO coreboot names for the payload (`struct lb_gpio`), as
+/// Depthcharge consumes them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpioInfo {
+    /// SoC GPIO number.
+    pub port: u32,
+    pub active_high: bool,
+    /// Value at table creation, or -1 (`u32::MAX`) if coreboot did not read it.
+    pub value: u32,
+    name: [u8; 16],
+}
 
 /// EFI firmware information from coreboot's LB_TAG_EFI_FW_INFO
 ///
@@ -457,6 +482,8 @@ pub struct CorebootInfo {
     pub efi_fw_info: Option<EfiFwInfo>,
     /// Capsule regions from coreboot (coalesced capsules ready for processing)
     pub capsules: heapless::Vec<CapsuleRegion, MAX_CAPSULES>,
+    /// Named board GPIOs (LB_TAG_GPIO).
+    pub gpios: heapless::Vec<GpioInfo, MAX_GPIOS>,
     /// TPM event log from CBMEM (address, size, format).
     ///
     /// Coreboot supports three log formats, each with its own CBMEM ID:
@@ -496,6 +523,7 @@ impl CorebootInfo {
             devicetree: None,
             efi_fw_info: None,
             capsules: heapless::Vec::new(),
+            gpios: heapless::Vec::new(),
             tpm_log: None,
         }
     }
@@ -830,6 +858,9 @@ fn parse_record(record_bytes: &[u8], info: &mut CorebootInfo, depth: usize) {
         tags::CB_TAG_CAPSULE => {
             parse_capsule(record_bytes, info);
         }
+        tags::CB_TAG_GPIO => {
+            parse_gpios(record_bytes, info);
+        }
         tags::CB_TAG_VERSION => {
             // Version string follows the 8-byte record header
             // Note: We need 'static lifetime since coreboot tables persist
@@ -1123,6 +1154,42 @@ fn parse_efi_fw_info(record_bytes: &[u8], info: &mut CorebootInfo) {
         lsv,
         fw_size / 1024
     );
+}
+
+/// Parse the named GPIO record (LB_TAG_GPIO): a count, then that many
+/// `struct lb_gpio` entries.
+fn parse_gpios(record_bytes: &[u8], info: &mut CorebootInfo) {
+    let Some(count) = record_bytes
+        .get(8..12)
+        .and_then(|bytes| bytes.try_into().ok())
+        .map(u32::from_le_bytes)
+    else {
+        log::warn!("Failed to parse GPIO record");
+        return;
+    };
+    let entries = record_bytes.get(12..).unwrap_or_default();
+    let Ok((gpios, _)) = <[CbGpio]>::ref_from_prefix_with_elems(
+        entries,
+        (count as usize).min(entries.len() / size_of::<CbGpio>()),
+    ) else {
+        log::warn!("Failed to parse GPIO record entries");
+        return;
+    };
+    if gpios.len() != count as usize {
+        log::warn!("GPIO record truncated: {} of {count} entries", gpios.len());
+    }
+    for gpio in gpios {
+        let entry = GpioInfo {
+            port: gpio.port,
+            active_high: gpio.polarity != 0,
+            value: gpio.value,
+            name: gpio.name,
+        };
+        if info.gpios.push(entry).is_err() {
+            log::warn!("Too many GPIO records (max {MAX_GPIOS})");
+            return;
+        }
+    }
 }
 
 /// Parse capsule region record (LB_TAG_CAPSULE)
@@ -1585,6 +1652,33 @@ mod tests {
         bytes[size_of::<CbHeader>()..].copy_from_slice(body);
         stamp_header(&mut bytes);
         bytes
+    }
+
+    fn gpio_record(entries: &[(u32, u32, u32, &[u8])], count: u32) -> std::vec::Vec<u8> {
+        let mut record = std::vec::Vec::new();
+        record.extend(tags::CB_TAG_GPIO.to_le_bytes());
+        record.extend(((12 + entries.len() * 28) as u32).to_le_bytes());
+        record.extend(count.to_le_bytes());
+        for &(port, polarity, value, name) in entries {
+            record.extend(port.to_le_bytes());
+            record.extend(polarity.to_le_bytes());
+            record.extend(value.to_le_bytes());
+            let mut padded = [0u8; 16];
+            padded[..name.len()].copy_from_slice(name);
+            record.extend(padded);
+        }
+        record
+    }
+
+    #[test]
+    fn truncated_gpio_record_keeps_complete_entries() {
+        let mut record = gpio_record(&[(28, 1, 0, b"XHCI init done")], 4);
+        record.extend([0u8; 10]);
+        let mut info = CorebootInfo::new();
+        parse_record(&record, &mut info, 0);
+        assert_eq!(info.gpios.len(), 1);
+        parse_record(&record[..10], &mut info, 0);
+        assert_eq!(info.gpios.len(), 1);
     }
 
     #[test]
