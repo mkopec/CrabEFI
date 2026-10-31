@@ -47,3 +47,38 @@ pub struct MemoryRegion {
     /// Type of memory
     pub region_type: MemoryType,
 }
+
+/// Whether `[start, start + size)` overlaps RAM in `regions`.
+pub fn overlaps_ram(regions: &[MemoryRegion], start: u64, size: u64) -> bool {
+    let end = start.saturating_add(size);
+    regions.iter().any(|region| {
+        region.region_type == MemoryType::Ram
+            && region.start < end
+            && start < region.start.saturating_add(region.size)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ram_overlap_ignores_reserved_ranges() {
+        let regions = [
+            MemoryRegion {
+                start: 0x8000_0000,
+                size: 0x7ffd_9000,
+                region_type: MemoryType::Ram,
+            },
+            MemoryRegion {
+                start: 0xfffd_9000,
+                size: 0x2_7000,
+                region_type: MemoryType::Reserved,
+            },
+        ];
+        assert!(overlaps_ram(&regions, 0xff80_0000, 0x80_0000));
+        assert!(!overlaps_ram(&regions, 0xfffe_0000, 0x2_0000));
+        assert!(!overlaps_ram(&regions, 0x7f80_0000, 0x80_0000));
+        assert!(!overlaps_ram(&[], 0xff80_0000, 0x80_0000));
+    }
+}
