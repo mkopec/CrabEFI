@@ -35,12 +35,42 @@ pub const EFI_OS_INDICATIONS_FMP_CAPSULE_SUPPORTED: u64 = 0x0000_0000_0000_0008;
 /// `OsIndications` bit for file-based capsule delivery support.
 pub const EFI_OS_INDICATIONS_FILE_CAPSULE_DELIVERY_SUPPORTED: u64 = 0x0000_0000_0000_0004;
 
+/// A capsule file's contents in boot services pages, which unlike the heap
+/// can hold a whole firmware image. Freed on drop.
+pub struct CapsuleData {
+    memory: &'static mut [u8],
+    len: usize,
+}
+
+impl CapsuleData {
+    fn allocate(len: usize) -> Option<Self> {
+        let pages = len.div_ceil(crate::efi::allocator::PAGE_SIZE_USIZE);
+        let memory = crate::efi::allocate_pages(u64::try_from(pages).ok()?)?;
+        Some(Self { memory, len })
+    }
+}
+
+impl core::ops::Deref for CapsuleData {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.memory[..self.len]
+    }
+}
+
+impl Drop for CapsuleData {
+    fn drop(&mut self) {
+        let pages = self.memory.len() / crate::efi::allocator::PAGE_SIZE_USIZE;
+        crate::efi::free_pages(self.memory, pages as u64);
+    }
+}
+
 /// Capsule data loaded from the ESP.
 pub struct DiskCapsule {
     /// File name (for logging).
     pub filename: heapless::String<256>,
     /// Raw capsule file contents.
-    pub data: Vec<u8>,
+    pub data: CapsuleData,
 }
 
 /// Check if file-based capsule delivery was requested via `OsIndications`.
@@ -170,15 +200,13 @@ fn scan_device_for_capsules(
             }
 
             // Read the file
-            let mut buffer = Vec::new();
-            if buffer.try_reserve_exact(file_size as usize).is_err() {
+            let Some(mut buffer) = CapsuleData::allocate(file_size as usize) else {
                 log::error!("Out of memory loading capsule file {}", path);
                 continue;
-            }
-            buffer.resize(file_size as usize, 0);
-            match fat_fs.read_file_all(&path, buffer.as_mut_slice()) {
+            };
+            match fat_fs.read_file_all(&path, &mut buffer.memory[..file_size as usize]) {
                 Ok(bytes_read) => {
-                    buffer.truncate(bytes_read);
+                    buffer.len = bytes_read.min(file_size as usize);
                     log::info!("Loaded capsule file: {} ({} bytes)", name, bytes_read);
 
                     capsules.push(DiskCapsule {
