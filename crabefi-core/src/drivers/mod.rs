@@ -165,6 +165,7 @@ pub mod serial_regs;
 #[cfg(feature = "spi-flash")]
 pub mod spi;
 pub mod storage;
+pub mod ufs;
 pub mod usb;
 
 /// Stop firmware-owned DMA before transferring control to an operating system.
