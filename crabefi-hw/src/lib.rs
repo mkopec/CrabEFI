@@ -6,6 +6,7 @@
 
 pub mod amd_gpio;
 pub mod designware;
+pub mod mediatek;
 
 #[cfg(test)]
 extern crate std;
