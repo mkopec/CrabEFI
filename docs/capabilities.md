@@ -36,7 +36,8 @@ may remain readable in the basic profile; it does not enable enforcement or
 change the reported `SecureBoot=0`/`SetupMode=1`. Protected key/auth-history writes
 remain denied. This is not an authenticated-variable implementation.
 
-Storage drivers are currently retained: AHCI, NVMe, SDHCI and USB 1/2 storage;
+Storage drivers are currently retained: AHCI, NVMe, SDHCI, USB 1/2 storage and,
+for platform-described controllers, read-only UFS;
 PS/2 and serial console also remain. There is **no IDE/ATA driver** in CrabEFI.
 A platform that exposes an IDE-class controller needs a host `BlockDevice` or a
 real ATA implementation, not an AHCI feature assumption. No hardware support or
