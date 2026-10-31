@@ -414,6 +414,20 @@ pub struct GpioInfo {
     name: [u8; 16],
 }
 
+impl GpioInfo {
+    /// Name without the NUL padding (coreboot's names are not terminated
+    /// when they use all 16 bytes).
+    #[cfg_attr(not(feature = "mt8196"), allow(dead_code))] // SoC glue only
+    pub fn name(&self) -> &[u8] {
+        let len = self
+            .name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.name.len());
+        &self.name[..len]
+    }
+}
+
 /// EFI firmware information from coreboot's LB_TAG_EFI_FW_INFO
 ///
 /// Contains the firmware identity and version information used for
@@ -526,6 +540,15 @@ impl CorebootInfo {
             gpios: heapless::Vec::new(),
             tpm_log: None,
         }
+    }
+
+    /// The board GPIO coreboot published under `name`.
+    #[cfg_attr(not(feature = "mt8196"), allow(dead_code))] // SoC glue only
+    pub fn gpio(&self, name: &str) -> Option<GpioInfo> {
+        self.gpios
+            .iter()
+            .copied()
+            .find(|gpio| gpio.name() == name.as_bytes())
     }
 }
 
@@ -1668,6 +1691,26 @@ mod tests {
             record.extend(padded);
         }
         record
+    }
+
+    #[test]
+    fn gpio_record_is_looked_up_by_name() {
+        let record = gpio_record(
+            &[
+                (28, 1, u32::MAX, b"XHCI init done"),
+                (18, 1, u32::MAX, b"TPM interrupt"),
+                (7, 0, 1, b"sixteen-byte-nam"),
+            ],
+            3,
+        );
+        let mut info = CorebootInfo::new();
+        parse_record(&record, &mut info, 0);
+        assert_eq!(info.gpios.len(), 3);
+        let xhci = info.gpio("XHCI init done").unwrap();
+        assert_eq!((xhci.port, xhci.active_high), (28, true));
+        let full = info.gpio("sixteen-byte-nam").unwrap();
+        assert_eq!((full.port, full.active_high, full.value), (7, false, 1));
+        assert_eq!(info.gpio("XHCI init"), None);
     }
 
     #[test]

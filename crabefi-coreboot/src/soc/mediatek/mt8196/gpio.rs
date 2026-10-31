@@ -61,6 +61,12 @@ pub fn set_output(pin: u32, high: bool) {
     unsafe { core::arch::asm!("dsb sy", options(nostack, preserves_flags)) };
 }
 
+/// Level the pin currently drives.
+pub fn output(pin: u32) -> bool {
+    let (dout, bit) = bank(DOUT, pin);
+    read(dout) & bit != 0
+}
+
 /// Level on the pad.
 pub fn input(pin: u32) -> bool {
     let (din, bit) = bank(DIN, pin);
