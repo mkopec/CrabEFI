@@ -67,6 +67,10 @@ x86_64 = "0.15"
 [target.'cfg(any(target_arch = "aarch64", target_arch = "riscv64"))'.dependencies]
 fdt = "0.1.5"
 
+[dev-dependencies]
+# Host tests of devicetree parsing (fdt is a target dependency above).
+fdt = "0.1.5"
+
 [build-dependencies]
 cc = "1"
 crabefi-runtime-abi = { path = "../crabefi-runtime-abi" }

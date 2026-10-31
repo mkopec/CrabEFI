@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+// A SoC devicetree without coherent DMA masters: a MediaTek 16550 and a UART
+// with an unknown compatible. Rebuild with
+// `dtc -I dts -O dtb -o soc-noncoherent.dtb soc-noncoherent.dts`.
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+	compatible = "vendor,soc-board";
+
+	serial@16000000 {
+		compatible = "mediatek,mt8196-uart", "mediatek,mt6577-uart";
+		reg = <0 0x16000000 0 0x1000>;
+	};
+
+	serial@16010000 {
+		compatible = "vendor,unknown-uart";
+		reg = <0 0x16010000 0 0x1000>;
+	};
+
+	ufshci@16810000 {
+		compatible = "vendor,ufshci";
+		reg = <0 0x16810000 0 0x2a00>;
+	};
+};

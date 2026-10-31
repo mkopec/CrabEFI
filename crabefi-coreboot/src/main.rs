@@ -40,6 +40,8 @@ mod arch_mmu;
 mod cbmem_console;
 mod cfr;
 mod cfr_menu;
+#[cfg(target_arch = "aarch64")]
+mod devicetree;
 mod fmap;
 mod framebuffer;
 mod memory;
@@ -83,6 +85,15 @@ impl memory_map::Region for crabefi::MemoryRegion {
             region_type,
         }
     }
+}
+
+/// The devicetree coreboot passed (in CBMEM, or the payload's FIT copy).
+fn coreboot_devicetree(cb_info: &tables::CorebootInfo) -> Option<&'static [u8]> {
+    // SAFETY: coreboot's devicetree pointer and size stay valid for the
+    // payload's lifetime.
+    cb_info.devicetree.map(|(addr, size)| unsafe {
+        core::slice::from_raw_parts(addr as *const u8, size as usize)
+    })
 }
 
 fn runtime_image_source() -> crabefi::RuntimeImageSource<'static> {
@@ -907,14 +918,30 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
     // ================================================================
     // Phase 3: Initialize serial and logging
     // ================================================================
-    if let Some(ref serial) = cb_info.serial {
-        crabefi::drivers::serial::init_from_config(&crabefi::drivers::serial::SerialConfig {
-            mmio: serial.mmio(),
-            baseaddr: serial.baseaddr as u64,
-            baud: serial.baud,
-            regwidth: serial.regwidth,
-            input_hertz: serial.input_hertz,
-        });
+    let serial_config =
+        cb_info
+            .serial
+            .as_ref()
+            .map(|serial| crabefi::drivers::serial::SerialConfig {
+                mmio: serial.mmio(),
+                baseaddr: serial.baseaddr as u64,
+                baud: serial.baud,
+                regwidth: serial.regwidth,
+                input_hertz: serial.input_hertz,
+            });
+    if let Some(ref serial) = serial_config {
+        // AArch64 defaults to a PL011; the devicetree identifies 16550s.
+        #[cfg(target_arch = "aarch64")]
+        let ns16550 = coreboot_devicetree(&cb_info)
+            .and_then(|fdt| devicetree::uart_kind(fdt, serial.baseaddr))
+            == Some(devicetree::UartKind::Ns16550);
+        #[cfg(not(target_arch = "aarch64"))]
+        let ns16550 = false;
+        if ns16550 {
+            crabefi::drivers::serial::init_16550_from_config(serial);
+        } else {
+            crabefi::drivers::serial::init_from_config(serial);
+        }
     }
 
     if cbmem_console_available {
@@ -1046,11 +1073,9 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
             })
         }
     };
+    let coreboot_fdt = coreboot_devicetree(&cb_info);
     #[cfg(not(target_arch = "riscv64"))]
-    let fdt_slice: Option<&[u8]> = cb_info.devicetree.map(|(addr, size)| {
-        // SAFETY: coreboot's devicetree pointer and size are valid.
-        unsafe { core::slice::from_raw_parts(addr as *const u8, size as usize) }
-    });
+    let fdt_slice: Option<&[u8]> = coreboot_fdt;
 
     let firmware_info = cb_info.efi_fw_info.map(|fw_info| crabefi::FirmwareInfo {
         guid: fw_info.guid,
