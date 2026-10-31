@@ -18,6 +18,12 @@ ui = ["crabefi/ui", "crabefi/elan-i2c", "crabefi/hid-i2c"]
 # invalid, instead of failing startup with no memory map. Useful only for
 # table-less QEMU experiments; never enable for real hardware.
 fallback-memory-map = []
+# Compile out log messages more verbose than a level, for quiet production
+# firmware. They apply to every crate through the shared `log` dependency;
+# select them with `crabefi build --max-log-level`.
+max-log-error = ["log/max_level_error", "log/release_max_level_error"]
+max-log-warn = ["log/max_level_warn", "log/release_max_level_warn"]
+max-log-info = ["log/max_level_info", "log/release_max_level_info"]
 
 [dependencies]
 crabefi = { package = "crabefi-core", path = "../crabefi-core", features = [

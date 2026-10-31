@@ -55,6 +55,9 @@ The `./crabefi` wrapper invokes the xtask build system:
 
 The output ELF is at `target/<triple>/release/crabefi`.
 
+`--max-log-level error|warn|info` compiles out more verbose log messages, for
+quiet production firmware.
+
 The default x86 build keeps coreboot's **32-bit protected-mode entry** and
 works with unmodified coreboot and the existing Q35 firmware fixture.
 
