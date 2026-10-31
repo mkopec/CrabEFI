@@ -151,6 +151,7 @@ dependencies = [
  "crabefi-core",
  "crabefi-hw",
  "crabefi-runtime-abi",
+ "embedded-hal",
  "embedded-hal-bus",
  "fdt",
  "heapless 0.9.3",
