@@ -1277,7 +1277,7 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
         }
     }
 
-    // MT8196 board devices.
+    // MT8196 board devices and variable store.
     #[cfg(all(target_arch = "aarch64", feature = "mt8196"))]
     mt8196::configure(&cb_info, &mut config);
 

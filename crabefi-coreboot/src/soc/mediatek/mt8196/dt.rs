@@ -71,6 +71,7 @@ pub struct Board {
     pub ec_spi: Option<u64>,
     /// `linux,keymap` of the EC keyboard (`row << 24 | column << 16 | code`).
     pub ec_keymap: Vec<u32>,
+    pub nor: Option<u64>,
     /// MT6373 always-on regulators.
     pub mt6373_always_on: Vec<Regulator>,
 }
@@ -91,11 +92,12 @@ pub fn init(fdt: Option<&[u8]>) {
         }
     };
     log::info!(
-        "MT8196 board: {} I2C buses, xHCI {:x?}, UFS {:x?}, EC SPI {:x?}",
+        "MT8196 board: {} I2C buses, xHCI {:x?}, UFS {:x?}, EC SPI {:x?}, NOR {:x?}",
         board.i2c.len(),
         board.xhci,
         board.ufs,
         board.ec_spi,
+        board.nor
     );
     *BOARD.borrow_mut() = Some(board);
 }
@@ -216,6 +218,12 @@ fn parse(dt: &fdt::Fdt<'_>) -> Board {
                 .collect();
         }
     }
+    // The firmware owns the NOR controller even when the OS's node is
+    // disabled (its variable store is written at runtime).
+    board.nor = dt
+        .all_nodes()
+        .find(|node| compatible_with(*node, "mediatek,mt8186-nor"))
+        .and_then(|node| regs64(node).first().map(|&(base, _)| base));
     board
 }
 

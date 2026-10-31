@@ -8,6 +8,8 @@ extern crate std;
 
 mod acpi;
 mod devicetree;
+#[cfg(feature = "mt8196")]
+mod fmap;
 mod framebuffer;
 mod memory;
 mod soc;
