@@ -135,6 +135,22 @@ impl DmaBuffer {
             .checked_mul(PAGE_SIZE)
             .and_then(|len| usize::try_from(len).ok())
             .ok_or(DmaError::InvalidRange)?;
+        if let Some(address) = super::dma_pool::allocate(pages)
+            .filter(|&address| allocation_fits_mask(address, pages, PAGE_SIZE, mask.max_address()))
+        {
+            // Pool memory is non-cacheable: no cache maintenance is needed.
+            return Ok(Self {
+                address,
+                device_address: address,
+                byte_len,
+                pages,
+                coherency: DmaCoherency::Coherent,
+            });
+        }
+        if super::dma_pool::active() {
+            // Never hand cached memory to non-snooping devices.
+            return Err(DmaError::OutOfResources);
+        }
         let mut address = mask.max_address();
         let status = allocator::allocate_pages(
             AllocateType::AllocateMaxAddress,
@@ -179,6 +195,25 @@ impl DmaBuffer {
             .ok_or(DmaError::OutOfResources)?;
         let device_limited_cpu_last = domain.cpu_base.saturating_add(device_mask_offset);
         let max_address = cpu_end.saturating_sub(1).min(device_limited_cpu_last);
+        if let Some(address) = super::dma_pool::allocate(pages) {
+            if address >= domain.cpu_base
+                && address + allocation_len - 1 <= max_address
+                && let Some(device_address) = domain.device_address(address, allocation_len)
+                && allocation_fits_mask(device_address, pages, PAGE_SIZE, mask.max_address())
+            {
+                return Ok(Self {
+                    address,
+                    device_address,
+                    byte_len,
+                    pages,
+                    coherency: DmaCoherency::Coherent,
+                });
+            }
+            super::dma_pool::free(address, pages);
+        }
+        if super::dma_pool::active() {
+            return Err(DmaError::OutOfResources);
+        }
         let mut address = 0;
         let status = allocator::allocate_pages_in_range(
             MemoryType::BootServicesData,
@@ -310,6 +345,9 @@ impl DmaBuffer {
 
 impl Drop for DmaBuffer {
     fn drop(&mut self) {
+        if super::dma_pool::free(self.address, self.pages) {
+            return;
+        }
         let status = allocator::free_pages(self.address, self.pages);
         if status != Status::SUCCESS {
             log::warn!(
