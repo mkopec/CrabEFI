@@ -19,6 +19,10 @@ _start:
     // x0 = coreboot table pointer (passed by coreboot)
     // Save it in a callee-saved register
     mov x19, x0
+    // coreboot/TF-A may enter in EL2t (SPSR=0x8). Select SP_EL2 so an
+    // exception does not switch onto an uninitialized, different stack.
+    msr DAIFSet, #0xf
+    msr SPSel, #1
 
     // Install our exception vector table FIRST, before anything else.
     // Coreboot's VBAR_EL2 points to ramstage memory that will be reused.
@@ -133,8 +137,13 @@ _start:
     subs x3, x3, #1
     b.ne .Lfill_l1_device
 
-    // Set TTBR0_EL2 to L0 table
+    // Complete table stores before a hardware walk can observe them, and
+    // discard translations left by any earlier EL2 context. QEMU does not
+    // expose missing publication barriers reliably; real CPUs require them.
+    dsb sy
     msr TTBR0_EL2, x10
+    tlbi alle2
+    dsb sy
     isb
 
     // Enable MMU via SCTLR_EL2
