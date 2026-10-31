@@ -118,7 +118,10 @@ impl BlsEntry {
                     }
                     "linux" => {
                         entry.linux.clear();
-                        let _ = entry.linux.push_str(normalize_path(value));
+                        entry
+                            .linux
+                            .push_str(normalize_path(value))
+                            .map_err(|_| BlsParseError::FieldTooLong)?;
                     }
                     "initrd" => {
                         // Each initrd line adds one, in order. An entry
@@ -134,7 +137,10 @@ impl BlsEntry {
                     }
                     "options" => {
                         entry.options.clear();
-                        let _ = entry.options.push_str(value);
+                        entry
+                            .options
+                            .push_str(value)
+                            .map_err(|_| BlsParseError::FieldTooLong)?;
                     }
                     "machine-id" => {
                         entry.machine_id.clear();
@@ -146,7 +152,10 @@ impl BlsEntry {
                     }
                     "devicetree" => {
                         entry.devicetree.clear();
-                        let _ = entry.devicetree.push_str(normalize_path(value));
+                        entry
+                            .devicetree
+                            .push_str(normalize_path(value))
+                            .map_err(|_| BlsParseError::FieldTooLong)?;
                     }
                     "architecture" => {
                         entry.architecture.clear();
@@ -175,6 +184,8 @@ pub enum BlsParseError {
     MissingRequired,
     /// An initrd path longer than supported, or more than [`MAX_INITRDS`]
     Initrd,
+    /// A kernel path, DTB path or command line would be truncated.
+    FieldTooLong,
 }
 
 /// Split a line into key and value
@@ -297,6 +308,19 @@ impl LoaderConf {
 mod tests {
     use super::*;
     use std::format;
+
+    #[test]
+    fn preserves_dtb_and_rejects_truncated_boot_fields() {
+        let entry = BlsEntry::parse("title Board\nlinux /Image\ndevicetree /board.dtb\n").unwrap();
+        assert_eq!(entry.devicetree.as_str(), "board.dtb");
+        for key in ["linux", "devicetree", "options"] {
+            let text = format!("title Navi\nlinux /Image\n{key} {}\n", "x".repeat(1024));
+            assert!(matches!(
+                BlsEntry::parse(&text),
+                Err(BlsParseError::FieldTooLong)
+            ));
+        }
+    }
 
     #[test]
     fn keeps_every_initrd_in_order() {
