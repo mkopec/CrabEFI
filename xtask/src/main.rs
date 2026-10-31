@@ -79,6 +79,8 @@ pub enum Machine {
     Sbsa,
     /// QEMU virt machine (FDT-based, DRAM at 1GB)
     Virt,
+    /// MediaTek MT8196 Chromebooks (hardware only, DRAM at 2GB)
+    Mt8196,
 }
 
 /// Most verbose log level compiled into the payload.
@@ -426,6 +428,7 @@ fn cmd_build_with_entry(
         (Arch::X86_64, _) => "x86_64".to_string(),
         (Arch::Aarch64, Machine::Sbsa) => "aarch64/sbsa".to_string(),
         (Arch::Aarch64, Machine::Virt) => "aarch64/virt".to_string(),
+        (Arch::Aarch64, Machine::Mt8196) => "aarch64/mt8196".to_string(),
         (Arch::Riscv64, _) => "riscv64".to_string(),
     };
     println!("Building CrabEFI ({})...", label);
@@ -452,6 +455,9 @@ fn cmd_build_with_entry(
         cmd.arg("--release");
     }
     let mut features = vec!["external-runtime-image"];
+    if arch == Arch::Aarch64 && machine == Machine::Mt8196 {
+        features.push("mt8196");
+    }
     if ui {
         features.push("ui");
     }
@@ -481,11 +487,7 @@ fn cmd_build_with_entry(
     // Architecture-specific: set PAYLOAD_BASE for the linker script.
     match arch {
         Arch::Aarch64 => {
-            let payload_base = match machine {
-                Machine::Sbsa => "0x10022000000",
-                Machine::Virt => "0x62000000",
-            };
-            cmd.env("PAYLOAD_BASE", payload_base);
+            cmd.env("PAYLOAD_BASE", aarch64_payload_base(machine));
         }
         Arch::Riscv64 => {
             // QEMU virt: DRAM at 0x80000000, payload at 0x81000000 (16MB in)
@@ -515,6 +517,16 @@ fn cmd_build_with_entry(
     let target_dir = if entry64 { "target/entry64" } else { "target" };
     println!("Built: {target_dir}/{target_triple}/{mode}/crabefi");
     Ok(())
+}
+
+/// Link address of the AArch64 payload.
+fn aarch64_payload_base(machine: Machine) -> &'static str {
+    match machine {
+        Machine::Sbsa => "0x10022000000",
+        Machine::Virt => "0x62000000",
+        // Free DRAM between coreboot's CBFS cache and its buffers
+        Machine::Mt8196 => "0x88000000",
+    }
 }
 
 /// Committer date of `HEAD` as Unix seconds, if the tree is a git checkout.
