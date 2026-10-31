@@ -221,7 +221,9 @@ pub fn install_os_indications_supported(capsule_delivery_usable: bool) {
         'd' as u16, 0,
     ];
 
-    let data = supported.to_le_bytes();
+    // The boot menu is always available as the firmware UI.
+    let data =
+        (supported | crate::efi::os_indications::EFI_OS_INDICATIONS_BOOT_TO_FW_UI).to_le_bytes();
 
     // BS + RT (read-only, not NV — the firmware always sets it)
     let attributes = 0x06u32; // BS | RT
