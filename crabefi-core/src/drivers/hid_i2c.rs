@@ -3,8 +3,10 @@
 //! The device's report descriptor decides what it is. Mouse collections
 //! drive the pointer, which also covers precision touchpads in their power-on
 //! mouse mode, and keyboard collections drive the keyboard through the same
-//! key handling as USB boot keyboards. Touchscreens and multi-touch
-//! digitizer reports are not interpreted.
+//! key handling as USB boot keyboards. Precision touchpads without a mouse
+//! collection are switched to touchpad input mode, as Linux's hid-multitouch
+//! does, and their primary contact drives the pointer. Touchscreens are not
+//! interpreted.
 
 use super::keyboard_common::KeyboardDevice;
 use super::pointer::{PointerDevice, PointerReport};
@@ -22,7 +24,9 @@ use zerocopy::{FromBytes, Immutable, KnownLayout, little_endian::U16};
 pub(crate) const IDS: &[&str] = &["PNP0C50", "ACPI0C50"];
 
 const OPCODE_RESET: u8 = 0x01;
+const OPCODE_SET_REPORT: u8 = 0x03;
 const OPCODE_SET_POWER: u8 = 0x08;
+const REPORT_TYPE_FEATURE: u8 = 0x03;
 const POWER_ON: u8 = 0x00;
 const POWER_SLEEP: u8 = 0x01;
 /// Bound the work of one poll.
@@ -38,6 +42,16 @@ const Y: u16 = 0x31;
 const WHEEL: u16 = 0x38;
 const KEY_CODES: u16 = 0x07;
 const BUTTONS: u16 = 0x09;
+const DIGITIZER: u16 = 0x0d;
+const TOUCHPAD: u16 = 0x05;
+const TIP_SWITCH: u16 = 0x42;
+const CONTACT_ID: u16 = 0x51;
+const CONTACT_COUNT: u16 = 0x54;
+const INPUT_MODE: u16 = 0x52;
+const SURFACE_SWITCH: u16 = 0x57;
+const BUTTON_SWITCH: u16 = 0x58;
+/// hid-multitouch MT_INPUTMODE_TOUCHPAD.
+const INPUT_MODE_TOUCHPAD: u32 = 3;
 
 /// HID descriptor, HID over I2C specification section 5.1.
 #[repr(C)]
@@ -152,6 +166,107 @@ impl Mouse {
     }
 }
 
+/// One contact slot of a precision touchpad report.
+struct Slot {
+    tip: VariableField,
+    id: Option<VariableField>,
+    x: VariableField,
+    y: VariableField,
+}
+
+#[derive(Clone, Copy)]
+struct Contact {
+    id: i32,
+    x: i32,
+    y: i32,
+}
+
+/// Precision touchpad (Windows PTP) input report fields.
+struct Touchpad {
+    report_id: Option<u8>,
+    size: usize,
+    slots: Vec<Slot>,
+    count: Option<VariableField>,
+    button: Option<VariableField>,
+}
+
+impl Touchpad {
+    fn find(descriptor: &ReportDescriptor) -> Option<Self> {
+        let collection = usage(DIGITIZER, TOUCHPAD);
+        descriptor.input_reports().iter().find_map(|report| {
+            let all = |page, id| {
+                variables(report, collection)
+                    .filter(move |field| u32::from(&field.usage) == usage(page, id))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            let (xs, ys, tips) = (
+                all(GENERIC_DESKTOP, X),
+                all(GENERIC_DESKTOP, Y),
+                all(DIGITIZER, TIP_SWITCH),
+            );
+            let mut ids = all(DIGITIZER, CONTACT_ID).into_iter();
+            let slots: Vec<_> = xs
+                .into_iter()
+                .zip(ys)
+                .zip(tips)
+                .filter(|((x, y), _)| !x.is_relative() && !y.is_relative())
+                .map(|((x, y), tip)| Slot {
+                    tip,
+                    id: ids.next(),
+                    x,
+                    y,
+                })
+                .collect();
+            if slots.is_empty() {
+                return None;
+            }
+            Some(Self {
+                report_id: (*report.report_id()).map(u8::from),
+                size: report.size_in_bytes(),
+                slots,
+                count: variable(report, collection, usage(DIGITIZER, CONTACT_COUNT)),
+                button: variable(report, collection, usage(BUTTONS, 1)),
+            })
+        })
+    }
+
+    /// The primary (first touching) contact, the contact count and the
+    /// clickpad button; `None` for hybrid-mode continuation reports.
+    fn read(&self, report: &[u8]) -> Option<(Option<Contact>, u32, bool)> {
+        let value = |field: &VariableField| field.extract(report).ok().map(i32::from);
+        let touching = |slot: &&Slot| value(&slot.tip).is_some_and(|tip| tip != 0);
+        let count = match &self.count {
+            Some(field) => u32::try_from(value(field)?).ok()?,
+            None => self.slots.iter().filter(touching).count() as u32,
+        };
+        if self.count.is_some() && count == 0 && self.slots.iter().any(|slot| touching(&slot)) {
+            return None;
+        }
+        let contact = self.slots.iter().find(touching).and_then(|slot| {
+            Some(Contact {
+                id: slot.id.as_ref().and_then(value).unwrap_or(0),
+                x: value(&slot.x)?,
+                y: value(&slot.y)?,
+            })
+        });
+        let button = self.button.as_ref().and_then(value).is_some_and(|b| b != 0);
+        Some((contact, count, button))
+    }
+}
+
+/// Write `value` into the little-endian bit range `bits` of `buffer`.
+fn put_bits(buffer: &mut [u8], bits: &core::ops::Range<usize>, value: u32) {
+    for (i, bit) in bits.clone().enumerate() {
+        let mask = 1 << (bit % 8);
+        if i < 32 && value & (1 << i) != 0 {
+            buffer[bit / 8] |= mask;
+        } else {
+            buffer[bit / 8] &= !mask;
+        }
+    }
+}
+
 /// Boot-keyboard-like fields of one input report.
 struct Keyboard {
     report_id: Option<u8>,
@@ -230,8 +345,11 @@ pub struct HidI2c<I> {
     address: u8,
     interrupt: Interrupt,
     command_register: u16,
+    data_register: u16,
     max_input: usize,
     mouse: Option<Mouse>,
+    touchpad: Option<Touchpad>,
+    previous: Option<Contact>,
     keyboard: Option<Keyboard>,
     /// Coalesce motion only within one button level, never across a click.
     reports: heapless::Deque<PointerReport, 16>,
@@ -268,8 +386,11 @@ impl<I: I2c> HidI2c<I> {
             address,
             interrupt,
             command_register: descriptor.command_register.get(),
+            data_register: descriptor.data_register.get(),
             max_input,
             mouse: None,
+            touchpad: None,
+            previous: None,
             keyboard: None,
             reports: heapless::Deque::new(),
             buttons: 0,
@@ -309,15 +430,22 @@ impl<I: I2c> HidI2c<I> {
             .map_err(|_| Error::ReportDescriptor)?;
         device.mouse = Mouse::find(&report_descriptor);
         device.keyboard = Keyboard::find(&report_descriptor);
-        if device.mouse.is_none() && device.keyboard.is_none() {
+        if device.mouse.is_none() {
+            device.touchpad = Touchpad::find(&report_descriptor);
+        }
+        if device.mouse.is_none() && device.keyboard.is_none() && device.touchpad.is_none() {
             return Err(Error::NoUsableCollection);
         }
+        if device.touchpad.is_some() {
+            device.set_touchpad_mode(&report_descriptor)?;
+        }
         log::info!(
-            "HID I2C device {:04x}:{:04x} at {:#x}: mouse {}, keyboard {}",
+            "HID I2C device {:04x}:{:04x} at {:#x}: mouse {}, touchpad {}, keyboard {}",
             descriptor.vendor.get(),
             descriptor.product.get(),
             address,
             device.mouse.is_some(),
+            device.touchpad.as_ref().map_or(0, |t| t.slots.len()),
             device.keyboard.is_some()
         );
         Ok(device)
@@ -328,6 +456,70 @@ impl<I: I2c> HidI2c<I> {
         self.bus
             .write(self.address, &[low, high, argument, opcode])
             .map_err(Error::Bus)
+    }
+
+    /// hid-multitouch mt_set_modes(): Input Mode = touchpad, and surface and
+    /// button switches on, in every feature report that carries them.
+    fn set_touchpad_mode(&mut self, descriptor: &ReportDescriptor) -> Result<(), Error<I::Error>> {
+        for report in descriptor.feature_reports() {
+            let mut buffer = vec![0u8; report.size_in_bytes()];
+            let mut used = false;
+            for field in report.fields() {
+                let Field::Variable(field) = field else {
+                    continue;
+                };
+                let value = match u32::from(&field.usage) {
+                    u if u == usage(DIGITIZER, INPUT_MODE) => INPUT_MODE_TOUCHPAD,
+                    u if u == usage(DIGITIZER, SURFACE_SWITCH) => 1,
+                    u if u == usage(DIGITIZER, BUTTON_SWITCH) => 1,
+                    _ => continue,
+                };
+                put_bits(&mut buffer, &field.bits, value);
+                used = true;
+            }
+            if used {
+                let id = (*report.report_id()).map_or(0, u8::from);
+                if id != 0 {
+                    buffer[0] = id;
+                }
+                log::debug!(
+                    "HID I2C {:#x}: SET_REPORT feature {id} {buffer:02x?}",
+                    self.address
+                );
+                self.set_feature(id, &buffer)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// i2c-hid SET_REPORT; `report` starts with the report ID when non-zero.
+    fn set_feature(&mut self, id: u8, report: &[u8]) -> Result<(), Error<I::Error>> {
+        let mut command = Vec::with_capacity(report.len() + 9);
+        command.extend_from_slice(&self.command_register.to_le_bytes());
+        if id < 0x0f {
+            command.extend_from_slice(&[REPORT_TYPE_FEATURE << 4 | id, OPCODE_SET_REPORT]);
+        } else {
+            command.extend_from_slice(&[REPORT_TYPE_FEATURE << 4 | 0x0f, OPCODE_SET_REPORT, id]);
+        }
+        command.extend_from_slice(&self.data_register.to_le_bytes());
+        command.extend_from_slice(&((report.len() + 2) as u16).to_le_bytes());
+        command.extend_from_slice(report);
+        self.bus.write(self.address, &command).map_err(Error::Bus)
+    }
+
+    fn push_motion(&mut self, motion: PointerReport) -> Result<(), Error<I::Error>> {
+        if let Some(pending) = self.reports.back_mut()
+            && pending.buttons == motion.buttons
+        {
+            pending.dx = pending.dx.saturating_add(motion.dx);
+            pending.dy = pending.dy.saturating_add(motion.dy);
+            pending.dz = pending.dz.saturating_add(motion.dz);
+            Ok(())
+        } else {
+            self.reports
+                .push_back(motion)
+                .map_err(|_| Error::InvalidReport)
+        }
     }
 
     /// Read the pending input reports into the pointer motion and key buffer.
@@ -370,17 +562,30 @@ impl<I: I2c> HidI2c<I> {
             && matches(report, mouse.report_id, mouse.size)
             && let Some(motion) = mouse.read(report)
         {
-            if let Some(pending) = self.reports.back_mut()
-                && pending.buttons == motion.buttons
-            {
-                pending.dx = pending.dx.saturating_add(motion.dx);
-                pending.dy = pending.dy.saturating_add(motion.dy);
-                pending.dz = pending.dz.saturating_add(motion.dz);
-            } else {
-                self.reports
-                    .push_back(motion)
-                    .map_err(|_| Error::InvalidReport)?;
-            }
+            self.push_motion(motion)?;
+        }
+        if let Some(touchpad) = &self.touchpad
+            && matches(report, touchpad.report_id, touchpad.size)
+            && let Some((contact, count, button)) = touchpad.read(report)
+        {
+            let (dx, dy) = self
+                .previous
+                .zip(contact)
+                .filter(|(old, new)| old.id == new.id)
+                .map_or((0, 0), |(old, new)| (new.x - old.x, new.y - old.y));
+            self.previous = contact;
+            // Clickpad: a press with two fingers down is the right button.
+            let buttons = match (button, count >= 2) {
+                (false, _) => 0,
+                (true, false) => 1,
+                (true, true) => 2,
+            };
+            self.push_motion(PointerReport {
+                dx,
+                dy,
+                dz: 0,
+                buttons,
+            })?;
         }
         if let Some(keyboard) = &self.keyboard
             && matches(report, keyboard.report_id, keyboard.size)
@@ -459,7 +664,10 @@ pub(crate) fn bind(device: I2cPeripheral) {
             return;
         }
     };
-    let (mouse, keyboard) = (hid.mouse.is_some(), hid.keyboard.is_some());
+    let (mouse, keyboard) = (
+        hid.mouse.is_some() || hid.touchpad.is_some(),
+        hid.keyboard.is_some(),
+    );
     let hid = Rc::new(RefCell::new(hid));
     if mouse {
         super::pointer::register(Box::new(HidPointer(hid.clone())));
