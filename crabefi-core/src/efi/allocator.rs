@@ -2004,6 +2004,41 @@ mod tests {
     }
 
     #[test]
+    fn boot_data_must_be_reserved_before_embedded_page_tables() {
+        let source = &[
+            MemoryType::ConventionalMemory,
+            MemoryType::ReservedMemoryType,
+        ];
+        let mut fragmented = allocator_with_ram();
+        fragmented.mark_as_reserved(0x11_0000, 2).unwrap();
+        assert!(
+            fragmented
+                .carve_out_from(0x10_4000, 24, MemoryType::BootServicesData, source,)
+                .is_err()
+        );
+
+        let mut protected = allocator_with_ram();
+        protected
+            .carve_out_from(0x10_0000, 4, MemoryType::BootServicesCode, source)
+            .unwrap();
+        protected
+            .carve_out_from(0x10_4000, 24, MemoryType::BootServicesData, source)
+            .unwrap();
+        let tables = protected
+            .entries
+            .iter()
+            .find(|entry| entry.physical_start <= 0x11_0000 && entry.end() >= 0x11_2000)
+            .unwrap();
+        assert_eq!(tables.get_memory_type(), Some(MemoryType::BootServicesData));
+        // No part of the data image may be handed back to an allocator caller.
+        assert!(!protected.entries.iter().any(|entry| {
+            entry.get_memory_type() == Some(MemoryType::ConventionalMemory)
+                && entry.physical_start < 0x11_c000
+                && entry.end() > 0x10_4000
+        }));
+    }
+
+    #[test]
     fn acpi_marking_retypes_verified_platform_reserved_memory() {
         let mut allocator = allocator_with_ram();
         let reserved_start = 0x20_0000;
