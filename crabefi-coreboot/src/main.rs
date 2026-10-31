@@ -31,6 +31,9 @@ mod arch_entry;
 #[cfg(target_arch = "x86_64")]
 #[path = "arch/x86_64/entry.rs"]
 mod arch_entry;
+#[cfg(target_arch = "aarch64")]
+#[path = "arch/aarch64/mmu.rs"]
+mod arch_mmu;
 mod cbmem_console;
 mod cfr;
 mod cfr_menu;
@@ -914,6 +917,17 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
     // Initialize logging (idempotent — init_platform() will call it again).
     crabefi::logger::init();
     apply_early_log_level(&cb_info);
+
+    #[cfg(target_arch = "aarch64")]
+    if let Some(ram) = cb_info
+        .memory_map
+        .iter()
+        .filter(|region| region.region_type == memory::MemoryType::Ram)
+        .map(|region| region.start)
+        .min()
+    {
+        arch_mmu::check_low_device_range(ram);
+    }
 
     if let Some(fb) = validated_framebuffer {
         crabefi::logger::set_framebuffer(fb);

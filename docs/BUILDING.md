@@ -103,6 +103,12 @@ Payload ELFs remain under `target/<triple>/release/crabefi`. Runtime ELF/image,
 map, symbols, disassembly, stack report, digest, and JSON audits are under
 `target/runtime/<arch>/`.
 
+### Build environment variables
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `LOW_DEVICE_GB` | `1` | AArch64: gigabytes from address 0 mapped as Device memory. Boards with MMIO up to DRAM at 2 GiB (MediaTek) need `2`; the payload warns at boot when the Device range ends below the lowest RAM under 4 GiB. |
+
 ### Build Configuration
 
 | File | Purpose |
