@@ -273,7 +273,15 @@ fn init_persistence_and_boot(
         if let Some(backend) = capsule_backend {
             let applied = efi::capsule::process_pending_capsules(backend);
             if applied != 0 {
-                log::info!("Applied {} pending firmware capsule(s)", applied);
+                // The running firmware is now stale and the results are
+                // persisted; delivery requests were cleared before applying,
+                // so the next boot runs the update without reprocessing it.
+                log::info!(
+                    "Applied {} pending firmware capsule(s); resetting into the update",
+                    applied
+                );
+                time::delay_ms(500);
+                reset_system();
             }
         }
     } else if capsule_backend_available {
