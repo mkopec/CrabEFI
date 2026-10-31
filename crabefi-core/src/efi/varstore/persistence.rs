@@ -62,6 +62,8 @@ struct VarStoreState {
     auth_format: bool,
     /// Size of the variable data area (after FV + VS headers)
     data_size: u32,
+    /// The region was erased and formatted during this boot.
+    formatted: bool,
 }
 
 impl VarStoreState {
@@ -71,6 +73,7 @@ impl VarStoreState {
             write_offset: 0,
             auth_format: false,
             data_size: 0,
+            formatted: false,
         }
     }
 }
@@ -487,6 +490,7 @@ fn init_varstore() -> Result<(), VarStoreError> {
         vs.auth_format = true;
         vs.data_size = data_size;
         vs.write_offset = edk2::VARIABLE_DATA_OFFSET;
+        vs.formatted = true;
     });
 
     log::info!("Variable store formatted as authenticated EDK2 FV successfully");
@@ -989,6 +993,11 @@ fn delete_existing_record_except(
 /// Check if storage backend is available
 pub fn is_storage_available() -> bool {
     with_storage_mut(|_| ()).is_some()
+}
+
+/// Whether the persistent store was freshly formatted during this boot.
+pub fn is_varstore_freshly_formatted() -> bool {
+    VARSTORE.get().formatted
 }
 
 /// Check if variable store is initialized.

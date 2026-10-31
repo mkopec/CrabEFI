@@ -112,8 +112,14 @@ pub fn init_secure_boot(config: &SecureBootConfig) -> Result<EnrollmentStatus, A
         enter_setup_mode();
         log::info!("Secure Boot: In Setup Mode (no PK enrolled)");
 
-        // Step 3: Optionally enroll default keys
-        if config.auto_enroll_defaults {
+        // Step 3: Optionally enroll default keys, but only into a store that
+        // has never been provisioned: a store formatted during this boot, or a
+        // volatile one. Clearing the keys in firmware setup must stick.
+        let unprovisioned = !crate::efi::varstore::persistence::is_varstore_initialized()
+            || crate::efi::varstore::persistence::is_varstore_freshly_formatted();
+        if config.auto_enroll_defaults && !unprovisioned {
+            log::info!("Secure Boot: keys were cleared; staying in Setup Mode");
+        } else if config.auto_enroll_defaults {
             log::info!("Auto-enrolling Microsoft default keys...");
             match enroll_and_persist_default_keys() {
                 Ok(()) => {

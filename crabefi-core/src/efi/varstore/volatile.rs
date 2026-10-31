@@ -32,3 +32,13 @@ pub(crate) fn persist_firmware_variable(
 ) -> Result<(), VarStoreError> {
     Err(VarStoreError::NotInitialized)
 }
+
+/// No persistent store exists.
+pub fn is_varstore_initialized() -> bool {
+    false
+}
+
+/// No persistent store was formatted.
+pub fn is_varstore_freshly_formatted() -> bool {
+    false
+}
