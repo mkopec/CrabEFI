@@ -45,7 +45,7 @@ ui = ["dep:noto-sans-mono-bitmap"]
 elan-i2c = ["ui"]
 # HID-over-I2C touchpads, mice and keyboards described by the platform.
 hid-i2c = ["ui", "dep:hidreport"]
-# Chrome EC host commands over SPI.
+# Chrome EC host commands over SPI and its MKBP keyboard.
 cros-ec = []
 
 [dependencies]
