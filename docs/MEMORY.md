@@ -28,6 +28,14 @@ stack locals that cannot outlive their frame. The arithmetic contains no
 `unsafe` code and handles only public data (key, signature, digest), so
 no scrubbing is needed.
 
+## Device-reachable memory
+
+A platform whose DMA masters reach only part of RAM can call
+`efi::allocator::set_any_pages_preferred_max(limit)`. `AllocateAnyPages`, and
+with it the heap and driver buffers, then prefers memory at or below the limit
+and uses the rest only when that is exhausted. RAM above the limit stays in
+the memory map for the OS.
+
 ## Runtime image memory
 
 The checked normalized image covers one contiguous allocation with page-aligned

@@ -280,6 +280,8 @@ pub struct MemoryAllocator {
     map_key: usize,
     /// Whether boot services have exited
     boot_services_exited: bool,
+    /// AllocateAnyPages searches at or below this address first.
+    any_pages_preferred_max: u64,
 }
 
 impl Default for MemoryAllocator {
@@ -296,6 +298,7 @@ impl MemoryAllocator {
             allocations: Vec::new(),
             map_key: 1,
             boot_services_exited: false,
+            any_pages_preferred_max: u64::MAX,
         }
     }
 
@@ -937,7 +940,9 @@ impl MemoryAllocator {
             return efi::Status::UNSUPPORTED;
         }
         let address = match alloc_type {
-            AllocateType::AllocateAnyPages => self.find_free_pages(num_pages, 0, u64::MAX),
+            AllocateType::AllocateAnyPages => self
+                .find_free_pages(num_pages, 0, self.any_pages_preferred_max)
+                .or_else(|| self.find_free_pages(num_pages, 0, u64::MAX)),
             AllocateType::AllocateMaxAddress => self.find_free_pages(num_pages, 0, *memory),
             AllocateType::AllocateAddress => {
                 if !memory.is_multiple_of(PAGE_SIZE) {
@@ -1447,6 +1452,14 @@ pub fn force_add_region(
     memory_type: MemoryType,
 ) -> Result<(), efi::Status> {
     ALLOCATOR.with_mut(|alloc| alloc.force_add_region(physical_start, num_pages, memory_type))
+}
+
+/// Make AllocateAnyPages prefer memory at or below `max_address` (inclusive),
+/// falling back to the rest only when that is exhausted. Platforms whose
+/// devices cannot reach high memory keep it usable by the OS this way while
+/// firmware allocations, including DMA-visible heap buffers, stay low.
+pub fn set_any_pages_preferred_max(max_address: u64) {
+    ALLOCATOR.with_mut(|alloc| alloc.any_pages_preferred_max = max_address);
 }
 
 /// Carve a physical range out of its containing map entry as `memory_type`.
