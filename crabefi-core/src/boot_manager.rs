@@ -77,8 +77,15 @@ pub(crate) fn run(boot_var_state: boot_vars::BootVarState) {
     // Apply timeout from the Timeout variable (if set) to the boot menu default
     let timeout_seconds = boot_var_state.timeout.unwrap_or(5) as u32;
 
+    // `systemctl reboot --firmware-setup`: skip automatic boot and wait in
+    // the boot menu (BootNext is left for the boot after this one).
+    let firmware_ui = efi::os_indications::take_boot_to_fw_ui_request();
+    if firmware_ui {
+        log::info!("OsIndications requested the firmware UI");
+    }
+
     // ---- Phase 1: BootNext ----
-    if let Some(boot_next_num) = boot_var_state.boot_next {
+    if !firmware_ui && let Some(boot_next_num) = boot_var_state.boot_next {
         log::info!("=== BootNext: attempting Boot{:04X} ===", boot_next_num);
 
         // Delete BootNext BEFORE attempting boot (prevents infinite loops)
@@ -112,7 +119,7 @@ pub(crate) fn run(boot_var_state: boot_vars::BootVarState) {
     }
 
     // ---- Phase 2: BootOrder ----
-    if !boot_var_state.boot_order.is_empty() {
+    if !firmware_ui && !boot_var_state.boot_order.is_empty() {
         log::info!(
             "=== BootOrder: trying {} entries ===",
             boot_var_state.boot_order.len()
@@ -185,7 +192,8 @@ pub(crate) fn run(boot_var_state: boot_vars::BootVarState) {
         crate::handoff::framebuffer().is_some(),
         timeout_seconds,
     );
-    boot_menu.set_timeout(timeout_seconds);
+    // A firmware UI request waits for a key (zero timeout), headless too.
+    boot_menu.set_timeout(if firmware_ui { 0 } else { timeout_seconds });
 
     log::debug!("Showing boot menu...");
 
