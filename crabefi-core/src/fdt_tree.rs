@@ -44,6 +44,22 @@ pub struct Tree {
     boot_cpuid: u32,
 }
 
+/// Why [`Tree::copy_node`] could not copy a node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyError {
+    /// The node or its parent is missing from the source tree.
+    NotFound,
+    /// The source node's `reg` does not match its parent's cell sizes.
+    InvalidReg,
+    /// The target parent does not state its cell sizes, but other children
+    /// rely on them, so they cannot be added.
+    UnknownCells,
+    /// An address or size does not fit the target parent's cell sizes.
+    DoesNotFit,
+    /// The target cannot reproduce the source parent's address translation.
+    Unsupported,
+}
+
 fn be32(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_be_bytes(
         bytes.get(offset..offset.checked_add(4)?)?.try_into().ok()?,
@@ -68,6 +84,17 @@ pub fn read_cells(bytes: &[u8], cells: u32) -> Option<u64> {
         2 => be64(bytes, 0).filter(|_| bytes.len() == 8),
         _ => None,
     }
+}
+
+/// Encode a number in `cells` big-endian cells, if it fits.
+pub fn write_cells(out: &mut Vec<u8>, value: u64, cells: u32) -> Option<()> {
+    match cells {
+        0 if value == 0 => {}
+        1 => out.extend_from_slice(&u32::try_from(value).ok()?.to_be_bytes()),
+        2 => out.extend_from_slice(&value.to_be_bytes()),
+        _ => return None,
+    }
+    Some(())
 }
 
 impl Node {
@@ -326,6 +353,78 @@ impl Tree {
     pub fn node_mut(&mut self, path: &str) -> Option<&mut Node> {
         components(path).try_fold(&mut self.root, |node, name| node.child_mut(name))
     }
+
+    /// Copy the node at `path`, with its subtree, from `source` if this tree
+    /// does not have it yet. Returns whether the node was added.
+    ///
+    /// The node's `reg` is re-encoded for the cell sizes of its parent here.
+    /// A missing parent (only directly below the root) is created, a parent
+    /// without cell sizes gets the source parent's, and an identity `ranges`
+    /// in the source parent is reproduced, so `reg` translates as it does in
+    /// the source.
+    pub fn copy_node(&mut self, source: &Tree, path: &str) -> Result<bool, CopyError> {
+        if self.node(path).is_some() {
+            return Ok(false);
+        }
+        let (parent_path, _) = path.rsplit_once('/').ok_or(CopyError::NotFound)?;
+        let source_parent = source.node(parent_path).ok_or(CopyError::NotFound)?;
+        let mut node = source.node(path).ok_or(CopyError::NotFound)?.clone();
+        let reg = match node.property("reg") {
+            Some(value) => Some(
+                source_parent
+                    .decode_reg(value)
+                    .ok_or(CopyError::InvalidReg)?,
+            ),
+            None => None,
+        };
+
+        let parent = match self.node_mut(parent_path) {
+            Some(parent) => parent,
+            None => {
+                let mut ancestors = components(parent_path);
+                let (Some(name), None) = (ancestors.next(), ancestors.next()) else {
+                    return Err(CopyError::Unsupported);
+                };
+                self.root.children.push(Node::new(name));
+                self.root.children.last_mut().ok_or(CopyError::NotFound)?
+            }
+        };
+        let is_root = components(parent_path).next().is_none();
+        let (address_cells, size_cells) = match (
+            parent.u32_property("#address-cells"),
+            parent.u32_property("#size-cells"),
+        ) {
+            (Some(address_cells), Some(size_cells)) => (address_cells, size_cells),
+            _ if parent
+                .children
+                .iter()
+                .any(|child| child.property("reg").is_some()) =>
+            {
+                return Err(CopyError::UnknownCells);
+            }
+            _ => source_parent.cells(),
+        };
+        let mut encoded = Vec::new();
+        for (address, size) in reg.iter().flatten() {
+            write_cells(&mut encoded, *address, address_cells).ok_or(CopyError::DoesNotFit)?;
+            write_cells(&mut encoded, *size, size_cells).ok_or(CopyError::DoesNotFit)?;
+        }
+        if !is_root && parent.property("ranges").is_none() {
+            match source_parent.property("ranges") {
+                Some([]) => parent.set_property("ranges", &[]),
+                Some(_) => return Err(CopyError::Unsupported),
+                None => {}
+            }
+        }
+
+        parent.set_property("#address-cells", &address_cells.to_be_bytes());
+        parent.set_property("#size-cells", &size_cells.to_be_bytes());
+        if reg.is_some() {
+            node.set_property("reg", &encoded);
+        }
+        parent.children.push(node);
+        Ok(true)
+    }
 }
 
 fn parse_structure(structure: &[u8], strings: &[u8]) -> Option<Node> {
@@ -483,6 +582,108 @@ mod tests {
             bad[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
             assert_eq!(Tree::parse(&bad), None, "offset {offset}");
         }
+    }
+
+    #[test]
+    fn copies_node_into_existing_parent_with_cells_and_ranges() {
+        let mut tree = target();
+        assert_eq!(
+            tree.copy_node(&coreboot_source(), "/firmware/coreboot"),
+            Ok(true)
+        );
+        let firmware = tree.node("/firmware").unwrap();
+        assert_eq!(firmware.cells(), (1, 1));
+        assert_eq!(firmware.property("ranges"), Some(&[][..]));
+        let coreboot = tree.node("/firmware/coreboot").unwrap();
+        assert_eq!(coreboot.property("board-id"), Some(&u32s(&[3])[..]));
+        assert_eq!(
+            firmware.decode_reg(coreboot.property("reg").unwrap()),
+            Some(vec![(0xfe00_0000, 0x1000), (0xfd00_0000, 0x0200_0000)])
+        );
+        // Existing children stay; a second copy is a no-op.
+        assert!(tree.node("/firmware/optee").is_some());
+        let before = tree.clone();
+        assert_eq!(
+            tree.copy_node(&coreboot_source(), "/firmware/coreboot"),
+            Ok(false)
+        );
+        assert_eq!(tree, before);
+        assert_eq!(Tree::parse(&tree.to_bytes()), Some(tree));
+    }
+
+    #[test]
+    fn copies_into_missing_parent_and_reencodes_for_existing_cells() {
+        let mut tree = target();
+        tree.root.children.clear();
+        assert_eq!(
+            tree.copy_node(&coreboot_source(), "/firmware/coreboot"),
+            Ok(true)
+        );
+        assert!(tree.node("/firmware/coreboot").is_some());
+
+        let mut tree = target();
+        let firmware = tree.node_mut("/firmware").unwrap();
+        firmware.set_property("#address-cells", &u32s(&[2]));
+        firmware.set_property("#size-cells", &u32s(&[2]));
+        firmware.set_property("ranges", &[]);
+        assert_eq!(
+            tree.copy_node(&coreboot_source(), "/firmware/coreboot"),
+            Ok(true)
+        );
+        let firmware = tree.node("/firmware").unwrap();
+        let reg = tree
+            .node("/firmware/coreboot")
+            .unwrap()
+            .property("reg")
+            .unwrap();
+        assert_eq!(reg.len(), 32);
+        assert_eq!(
+            firmware.decode_reg(reg).unwrap()[1],
+            (0xfd00_0000, 0x0200_0000)
+        );
+    }
+
+    #[test]
+    fn refuses_ambiguous_or_lossy_copies() {
+        let mut tree = target();
+        tree.node_mut("/firmware/optee")
+            .unwrap()
+            .set_property("reg", &u32s(&[0, 1, 0]));
+        assert_eq!(
+            tree.copy_node(&coreboot_source(), "/firmware/coreboot"),
+            Err(CopyError::UnknownCells)
+        );
+
+        let mut source = coreboot_source();
+        source
+            .node_mut("/firmware")
+            .unwrap()
+            .set_property("#address-cells", &u32s(&[2]));
+        source
+            .node_mut("/firmware/coreboot")
+            .unwrap()
+            .set_property("reg", &u32s(&[1, 0, 0x1000]));
+        let mut tree = target();
+        let firmware = tree.node_mut("/firmware").unwrap();
+        firmware.set_property("#address-cells", &u32s(&[1]));
+        firmware.set_property("#size-cells", &u32s(&[1]));
+        assert_eq!(
+            tree.copy_node(&source, "/firmware/coreboot"),
+            Err(CopyError::DoesNotFit)
+        );
+
+        source
+            .node_mut("/firmware/coreboot")
+            .unwrap()
+            .set_property("reg", &u32s(&[1, 0]));
+        assert_eq!(
+            target().copy_node(&source, "/firmware/coreboot"),
+            Err(CopyError::InvalidReg)
+        );
+        assert_eq!(
+            target().copy_node(&source, "/firmware/missing"),
+            Err(CopyError::NotFound)
+        );
     }
 
     /// Validate and round-trip real devicetrees when provided, e.g.
