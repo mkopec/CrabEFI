@@ -507,6 +507,10 @@ pub trait CapsuleBackend {
 /// library must not know about (for example invalidating platform handoff data
 /// or disabling non-runtime debug buffers before the OS takes over).
 pub trait PlatformHooks {
+    /// Initialize platform-specific controllers after EFI allocator/runtime
+    /// setup, before generic PCI discovery and boot-device scanning.
+    fn init_devices(&self) {}
+
     /// Called after `ExitBootServices()` succeeds, before the system table's
     /// Boot Services pointer is cleared.
     fn on_exit_boot_services(&self) {}
