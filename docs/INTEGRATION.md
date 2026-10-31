@@ -51,6 +51,7 @@ let config = crabefi::PlatformConfig {
             io_or_mmio_base: 0,
         },
         external_ranges: &[],
+        nvram: crabefi::RuntimeNvramConfig::default(),
         deferred_buffer: crabefi::DeferredBufferConfig {
             base: retained_buffer_physical,
             size: retained_buffer_size,
@@ -84,8 +85,13 @@ explicit retained runtime MMIO range; port-I/O, PSCI, and SBI mechanisms do not
 require an MMIO range.
 
 External ranges are retained MMIO mappings used only by image-local
-architecture mechanisms. Each range must have page-aligned physical bounds and
+architecture and NVRAM mechanisms. Each range must have page-aligned physical bounds and
 its descriptor must retain `EFI_MEMORY_RUNTIME` plus the declared attributes.
+
+`RuntimePlatformConfig::nvram` defaults to no mechanism. A platform that sets
+one lets runtime SetVariable write its variable flash in place; see
+[capabilities](capabilities.md#runtime-nvram-mechanisms) for the contract,
+including keeping the OS off that controller.
 
 ## Retained deferred buffer
 

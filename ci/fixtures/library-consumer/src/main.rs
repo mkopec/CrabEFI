@@ -74,6 +74,7 @@ pub extern "C" fn _start() -> ! {
                 time: runtime_time_config(),
                 reset: runtime_reset_config(),
                 external_ranges: &[],
+                nvram: crabefi::RuntimeNvramConfig::default(),
                 deferred_buffer: DeferredBufferConfig {
                     base: deferred_base,
                     size: 4096,

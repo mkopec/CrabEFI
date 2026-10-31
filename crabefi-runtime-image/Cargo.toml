@@ -14,6 +14,7 @@ full = ["secure-boot"]
 
 [dependencies]
 crabefi-efi-types = { path = "../crabefi-efi-types" }
+crabefi-hw = { path = "../crabefi-hw" }
 crabefi-pkcs7 = { path = "../crabefi-pkcs7", optional = true }
 crabefi-runtime-abi = { path = "../crabefi-runtime-abi" }
 bitflags = { version = "2", default-features = false }

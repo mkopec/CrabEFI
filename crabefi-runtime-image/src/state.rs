@@ -5,15 +5,16 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 use crabefi_runtime_abi::{
-    LoadedSection, MAX_EXTERNAL_RANGES, MAX_RELOCATIONS, MAX_SECTIONS, RelocationImport,
-    ResetMechanism, RuntimeExternalRange, RuntimeHandoff, TimeMechanism, relocation_kind,
-    section_flags,
+    LoadedSection, MAX_EXTERNAL_RANGES, MAX_RELOCATIONS, MAX_SECTIONS, NvramMechanism,
+    RelocationImport, ResetMechanism, RuntimeExternalRange, RuntimeHandoff, TimeMechanism,
+    relocation_kind, section_flags,
 };
 use heapless::Vec;
 
 use crate::{
     deferred::{DeferredRegion, DeferredTransaction},
     efi,
+    nvram::NvramConfig,
     store::{VariableStore, VariableTransaction},
     tables::ImageTables,
 };
@@ -123,6 +124,7 @@ pub struct RuntimeState {
     pub ranges: Vec<RangeRecord, MAX_EXTERNAL_RANGES>,
     pub relocations: Vec<RelocationRecord, MAX_RELOCATIONS>,
     pub time: TimeConfig,
+    pub nvram: NvramConfig,
     pub boot_bridge: u64,
     pub retained: Option<RetainedBuffer>,
     pub capsule_delivery_enabled: bool,
@@ -139,6 +141,7 @@ impl RuntimeState {
                 mechanism: TimeMechanism::Unsupported,
                 base: 0,
             },
+            nvram: NvramConfig::none(),
             boot_bridge: 0,
             retained: None,
             capsule_delivery_enabled: false,
@@ -171,6 +174,13 @@ impl RuntimeState {
                 .map_err(|_| efi::Status::INVALID_PARAMETER)?,
             base: handoff.reset.io_or_mmio_base,
         };
+        self.nvram = NvramConfig {
+            mechanism: NvramMechanism::try_from(handoff.nvram.mechanism)
+                .map_err(|_| efi::Status::INVALID_PARAMETER)?,
+            mmio_bases: handoff.nvram.mmio_bases,
+            region_offset: handoff.nvram.region_offset,
+            region_size: handoff.nvram.region_size,
+        };
         self.boot_bridge = handoff.boot_bridge;
         self.retained = match (handoff.deferred_buffer_base, handoff.deferred_buffer_size) {
             (0, 0) => None,
@@ -185,6 +195,32 @@ impl RuntimeState {
         // never reads through an outstanding mutable state lease.
         RUNTIME_RESET_CONFIG.publish(reset);
         Ok(())
+    }
+
+    /// The NVRAM config with its MMIO bases at their current addresses:
+    /// virtual once SetVirtualAddressMap committed, physical before.
+    pub fn mapped_nvram(&self) -> Option<NvramConfig> {
+        if self.nvram.mechanism == NvramMechanism::None {
+            return None;
+        }
+        let mut mapped = self.nvram;
+        for (base, width) in mapped
+            .mmio_bases
+            .iter_mut()
+            .zip(self.nvram.mechanism.mmio_widths())
+        {
+            if width == 0 {
+                continue;
+            }
+            let range = self.ranges.iter().find(|range| {
+                range.physical_base <= *base
+                    && base.saturating_add(width) <= range.physical_base + range.byte_len
+            })?;
+            if range.virtual_base != 0 {
+                *base = range.virtual_base + (*base - range.physical_base);
+            }
+        }
+        Some(mapped)
     }
 
     pub fn import_relocation(&mut self, relocation: &RelocationImport) -> Result<(), efi::Status> {

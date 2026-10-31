@@ -127,8 +127,8 @@ not a backend trait object. Sealing clears the bridge and boot-service pointers;
 the core then detaches its backend before OS ownership of boot memory. Runtime
 code must never dereference a boot stack, backend vtable or reclaimed boot image.
 
-The current runtime image has **no native persistent flash driver or SMM storage
-service**. With a configured retained buffer it can queue NV writes in a CRC-bound
+Without an NVRAM mechanism (below), the runtime image has **no native persistent
+flash driver or SMM storage service**. With a configured retained buffer it can queue NV writes in a CRC-bound
 RAM journal for replay at a later boot. Journal format v3 binds the exact runtime
 capability bits into the local header CRC. A different profile returns
 `UNSUPPORTED` before changing retained bytes, staging a transaction, or invoking
@@ -154,6 +154,38 @@ its explicit nonzero retained-buffer configuration. A host must explicitly decid
 whether retained staging is acceptable or implement a genuinely runtime-safe
 bounded persistent service. Selecting final fstart post-EBS persistence policy is
 not implied by selecting Secure Boot or a basic feature profile.
+
+## Runtime NVRAM mechanisms
+
+A platform whose variable flash the OS does not drive can select a runtime
+NVRAM mechanism in `RuntimePlatformConfig::nvram`, a value-only record of the
+mechanism, its MMIO bases and the variable region's offset and size. It is
+the runtime-safe bounded persistent service described above, with these
+limits:
+
+- **Validated handoff.** Every MMIO base must lie in a declared external
+  range, and the region must be nonempty and within the flash range the
+  mechanism can address. Otherwise the runtime image is not started.
+- **Bounded access.** Every flash read and program is region-relative and
+  checked against the region size. The image never erases: compaction stays a
+  boot-time operation. It mounts the store with the boot reader's header
+  checks and refuses one it would not accept.
+- **Same record protocol.** A commit appends the record (header, name, data,
+  each read back) and marks it `VAR_HEADER_VALID_ONLY`, then `VAR_ADDED`, and
+  only then retires its predecessors, as the boot-time writer does. An
+  interrupted append leaves a record that readers skip and the next boot-time
+  write compacts away.
+- **Fallback.** A full region or a flash, verify or protection failure never
+  reports success. The change goes to the retained journal when one is
+  configured, and SetVariable fails with `DEVICE_ERROR` otherwise.
+- **Bounded cost.** There is no heap. Buffers are fixed on the stack, and
+  every controller wait has a poll limit. One call scans the store once and
+  programs one record.
+- **Exclusive device.** The platform must keep the OS off the controller after
+  ExitBootServices. The image restores any clock gates it opened.
+
+This is not power-loss-atomic beyond the record protocol, and it needs
+hardware validation per board like any other mechanism.
 
 ## Toolchain and validation scope
 

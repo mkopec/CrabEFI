@@ -1247,6 +1247,9 @@ pub struct RuntimePlatformConfig<'a> {
     /// Explicit MMIO ranges that remain reachable after EBS. The loader
     /// describes each as runtime MMIO in the memory map.
     pub external_ranges: &'a [crabefi_runtime_abi::RuntimeExternalRange],
+    /// Variable flash the runtime image writes in place after EBS; its MMIO
+    /// bases must lie in `external_ranges`.
+    pub nvram: crabefi_runtime_abi::RuntimeNvramConfig,
     /// Optional, exclusively owned warm-reset-preserved deferred storage.
     pub deferred_buffer: DeferredBufferConfig,
 }

@@ -41,6 +41,9 @@ Boot Services. Before EBS, one typed BootActive persistence bridge may write
 nonvolatile variables. It is erased during seal. A retained RuntimeServicesData
 buffer holds deferred nonvolatile records and capsule staging metadata across a
 warm reset; the next boot replays the journal through the temporary bridge.
+A platform may instead hand the image a value-only NVRAM mechanism: runtime
+SetVariable then appends to the variable store in flash itself, and uses the
+journal only when that fails.
 
 The image phase sequence is:
 
@@ -124,6 +127,8 @@ they are not globally frozen by image loading.
   supplied.
 - **RV64:** SBI SRST reset and Goldfish RTC time when a retained MMIO range is
   supplied.
+- **NVRAM (AArch64):** MediaTek MT8196 SPI NOR, appending to the EDK2
+  variable store in a declared flash region through retained MMIO ranges.
 
 ## Build and verification
 

@@ -76,6 +76,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "crabefi-hw"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+ "tock-registers",
+]
+
+[[package]]
 name = "crabefi-pkcs7"
 version = "0.1.0"
 dependencies = [
@@ -92,6 +100,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "crabefi-efi-types",
+ "crabefi-hw",
  "crabefi-pkcs7",
  "crabefi-runtime-abi",
  "heapless",
@@ -153,6 +162,12 @@ dependencies = [
  "const-oid",
  "crypto-common",
 ]
+
+[[package]]
+name = "embedded-hal"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
 name = "hash32"
@@ -329,6 +344,12 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
+
+[[package]]
+name = "tock-registers"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d2d250f87fb3fb6f225c907cf54381509f47b40b74b1d1f12d2dccbc915bdfe"
 
 [[package]]
 name = "typenum"

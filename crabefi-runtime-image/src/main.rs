@@ -12,6 +12,7 @@ mod arch;
 mod auth;
 mod deferred;
 mod efi;
+mod nvram;
 mod services;
 mod state;
 mod store;

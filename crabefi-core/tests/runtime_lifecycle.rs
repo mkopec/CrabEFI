@@ -346,6 +346,7 @@ fn actual_loader_seal_svam_and_runtime_services_with_and_without_retained_stagin
                 io_or_mmio_base: 0,
             },
             external_ranges: &[],
+            nvram: crabefi::RuntimeNvramConfig::default(),
             deferred_buffer,
         };
         #[cfg(feature = "secure-boot")]
