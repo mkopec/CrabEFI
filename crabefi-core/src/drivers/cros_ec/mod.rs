@@ -4,6 +4,8 @@
 //! [`EcSpi`]; this module frames requests, waits for the EC's framing byte
 //! and validates responses as Linux's cros_ec_spi does.
 
+pub mod keyboard;
+
 use core::fmt::Debug;
 
 use crate::time::Timeout;
