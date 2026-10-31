@@ -42,6 +42,12 @@ pub fn init_from_platform(config: &mut crate::platform::PlatformConfig) {
         add_platform_mmio_regions();
     }
 
+    // Reserve the payload before its embedded page tables: carving out the
+    // latter first fragments the data descriptor and prevents the boot-image
+    // reservation from covering its full range.
+    #[cfg(feature = "platform-entry")]
+    allocator::reserve_boot_image_region();
+
     // On aarch64, reserve EL2 page tables if running at EL2.
     // When called from fstart (which typically runs at EL1), this is a no-op.
     #[cfg(target_arch = "aarch64")]
@@ -61,11 +67,6 @@ pub fn init_from_platform(config: &mut crate::platform::PlatformConfig) {
             log::info!("Running at EL{} — skipping EL2 page table reservation", el);
         }
     }
-
-    // The payload itself is boot-lifetime memory. Only the separately loaded
-    // runtime image and explicit external ranges receive Runtime memory types.
-    #[cfg(feature = "platform-entry")]
-    allocator::reserve_boot_image_region();
 
     // The EFI state tables are heap-backed, so initialize the heap after the
     // page allocator and runtime regions are ready but before system-table and
@@ -1193,6 +1194,15 @@ fn reserve_el2_page_tables() {
         max_addr,
         pages
     );
+
+    if allocator::range_has_memory_type(
+        min_addr,
+        pages * PAGE_SIZE,
+        allocator::MemoryType::BootServicesData,
+    ) {
+        log::info!("EL2 page tables are already protected by the boot image reservation");
+        return;
+    }
 
     // Reserve these pages by carving them out of the existing ConventionalMemory
     // region. Using mark_as_reserved() (not force_add_region()) ensures the
