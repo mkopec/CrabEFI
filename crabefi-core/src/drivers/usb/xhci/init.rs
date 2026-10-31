@@ -360,7 +360,7 @@ impl super::XhciController {
         // DCBAA[0] is reserved for scratchpad buffer array pointer
         // DCBAA[1..max_slots] are for device context pointers
         let dcbaa_pages = ((self.slots.capacity() as u64 + 1) * 8).div_ceil(4096);
-        let dcbaa_mem = efi::allocate_pages(dcbaa_pages).ok_or(XhciError::AllocationFailed)?;
+        let dcbaa_mem = efi::allocate_dma_pages(dcbaa_pages).ok_or(XhciError::AllocationFailed)?;
         dcbaa_mem.fill(0);
         self.dcbaa = dcbaa_mem.as_ptr() as u64;
 
@@ -378,7 +378,7 @@ impl super::XhciController {
             let sp_array_size = (self.num_scratchpad_bufs as u64) * 8;
             let sp_array_pages = sp_array_size.div_ceil(4096);
             let sp_array_mem =
-                efi::allocate_pages(sp_array_pages).ok_or(XhciError::AllocationFailed)?;
+                efi::allocate_dma_pages(sp_array_pages).ok_or(XhciError::AllocationFailed)?;
             sp_array_mem.fill(0);
             let scratchpad_array = sp_array_mem.as_ptr() as u64;
 
@@ -390,7 +390,8 @@ impl super::XhciController {
                 // to fit a controller-page-aligned interior buffer, including
                 // controllers which do not advertise support for 4 KiB pages.
                 let buf_pages = 2 * (u64::from(page_size) / 4096) - 1;
-                let buf_mem = efi::allocate_pages(buf_pages).ok_or(XhciError::AllocationFailed)?;
+                let buf_mem =
+                    efi::allocate_dma_pages(buf_pages).ok_or(XhciError::AllocationFailed)?;
                 buf_mem.fill(0);
                 let buf_addr = scratchpad_address(buf_mem.as_ptr() as u64, page_size);
 
@@ -422,7 +423,7 @@ impl super::XhciController {
         self.registers.operational.dcbaap.write_volatile(dcbaap);
 
         // Allocate command ring (256 TRBs)
-        let cmd_ring_mem = efi::allocate_pages(1).ok_or(XhciError::AllocationFailed)?;
+        let cmd_ring_mem = efi::allocate_dma_pages(1).ok_or(XhciError::AllocationFailed)?;
         let cmd_ring_base = cmd_ring_mem.as_ptr() as u64;
         self.cmd_ring = TrbRing::new(cmd_ring_base, 256);
 
@@ -438,12 +439,12 @@ impl super::XhciController {
         });
 
         // Allocate event ring (256 TRBs) - no link TRB for event rings
-        let event_ring_mem = efi::allocate_pages(1).ok_or(XhciError::AllocationFailed)?;
+        let event_ring_mem = efi::allocate_dma_pages(1).ok_or(XhciError::AllocationFailed)?;
         let event_ring_base = event_ring_mem.as_ptr() as u64;
         self.event_ring = TrbRing::new_event_ring(event_ring_base, 256);
 
         // Allocate Event Ring Segment Table (ERST)
-        let erst_mem = efi::allocate_pages(1).ok_or(XhciError::AllocationFailed)?;
+        let erst_mem = efi::allocate_dma_pages(1).ok_or(XhciError::AllocationFailed)?;
         erst_mem.fill(0);
         self.erst = erst_mem.as_ptr() as u64;
 

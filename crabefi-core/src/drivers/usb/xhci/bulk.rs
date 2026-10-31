@@ -206,9 +206,9 @@ impl super::XhciController {
             .ok_or(XhciError::DeviceNotFound)?;
 
         // Allocate transfer rings for bulk endpoints
-        let in_ring_mem = efi::allocate_pages(1).ok_or(XhciError::AllocationFailed)?;
+        let in_ring_mem = efi::allocate_dma_pages(1).ok_or(XhciError::AllocationFailed)?;
         let in_ring_addr = in_ring_mem.as_ptr() as u64;
-        let out_ring_mem = efi::allocate_pages(1).ok_or(XhciError::AllocationFailed)?;
+        let out_ring_mem = efi::allocate_dma_pages(1).ok_or(XhciError::AllocationFailed)?;
         let out_ring_addr = out_ring_mem.as_ptr() as u64;
 
         let in_ring = TrbRing::new(in_ring_addr, 256);
