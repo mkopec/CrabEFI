@@ -150,16 +150,13 @@ fn handle_action(idx: usize) -> Option<(&'static str, bool)> {
     use crate::efi::auth;
     match idx {
         0 => {
+            // Resets on success.
             if auth::is_secure_boot_enabled() {
-                auth::disable_secure_boot();
-                Some(("Secure Boot disabled", true))
+                auth::change_secure_boot_and_reset(false);
+                Some(("Failed to disable Secure Boot", false))
             } else {
-                auth::enable_secure_boot();
-                if auth::is_secure_boot_enabled() {
-                    Some(("Secure Boot enabled", true))
-                } else {
-                    Some(("Cannot enable: no PK enrolled", false))
-                }
+                auth::change_secure_boot_and_reset(true);
+                Some(("Cannot enable: no PK enrolled", false))
             }
         }
         1 => {

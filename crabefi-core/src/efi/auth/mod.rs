@@ -199,6 +199,28 @@ pub fn disable_secure_boot() {
     }
 }
 
+/// Firmware-setup Secure Boot switch.
+///
+/// PCR 7 is measured once, before the boot menu runs, so a change cannot take
+/// effect in the current boot: persist the preference and reset, and the next
+/// boot both enforces and measures the new state. Returns `false` if the
+/// change could not be made (no PK enrolled, or the preference was not
+/// stored); does not return otherwise.
+#[cfg(feature = "secure-boot")]
+pub fn change_secure_boot_and_reset(enable: bool) -> bool {
+    if enable {
+        enable_secure_boot();
+    } else {
+        disable_secure_boot();
+    }
+    if is_secure_boot_enabled() != enable {
+        return false;
+    }
+    log::warn!("Secure Boot setting changed; resetting so PCR 7 matches enforcement");
+    crate::time::delay_ms(500);
+    crate::reset_system()
+}
+
 /// Persist the SecureBootEnable preference to non-volatile storage
 #[cfg(feature = "secure-boot")]
 fn persist_secure_boot_enable_preference(enabled: bool) {

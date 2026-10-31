@@ -143,14 +143,9 @@ pub fn show_secure_boot_menu() {
                         // Execute the action
                         match option {
                             MenuOption::ToggleSecureBoot => {
-                                if secure_boot_enabled {
-                                    auth::disable_secure_boot();
-                                    status_message = Some(("Secure Boot disabled", true));
-                                } else {
-                                    auth::enable_secure_boot();
-                                    status_message = Some(("Secure Boot enabled", true));
-                                }
-                                // Update status variables
+                                // Resets on success.
+                                auth::change_secure_boot_and_reset(!secure_boot_enabled);
+                                status_message = Some(("Failed to change Secure Boot", false));
                                 let _ = secure_boot::update_status_variables();
                             }
                             MenuOption::EnrollDefaultKeys => {
