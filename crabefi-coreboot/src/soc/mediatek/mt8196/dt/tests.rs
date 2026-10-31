@@ -15,6 +15,7 @@ fn board() -> Board {
 #[test]
 fn controllers_come_from_the_devicetree() {
     let board = board();
+    assert_eq!(board.xhci, Some((0x1670_0000, 0x1670_3e00)));
     assert_eq!(board.ufs, Some(0x1681_0000));
     // The EC with the keyboard, not the fingerprint EC on spi@16120000.
     assert_eq!(board.ec_spi, Some(0x1613_0000));

@@ -3,8 +3,8 @@
 //!
 //! The payload calls [`init_memory`], [`configure`] and [`init_devices`] in
 //! boot order; nothing here is board-specific. Board wiring comes from the
-//! devicetree; the UART and the non-cacheable DMA pool are set up from the
-//! devicetree by the payload.
+//! devicetree and from coreboot's named GPIOs; the UART and the
+//! non-cacheable DMA pool are set up from the devicetree by the payload.
 
 pub mod dt;
 #[cfg(target_arch = "aarch64")]
@@ -15,13 +15,15 @@ mod gpio;
 mod i2c;
 #[cfg(target_arch = "aarch64")]
 mod ufs;
+#[cfg(target_arch = "aarch64")]
+mod usb;
 
 #[cfg(target_arch = "aarch64")]
 pub use self::platform::*;
 
 #[cfg(target_arch = "aarch64")]
 mod platform {
-    use super::{dt, ec, i2c, ufs};
+    use super::{dt, ec, i2c, ufs, usb};
     use crate::tables::CorebootInfo;
 
     /// The DMA masters (xHCI, UFS, I2C APDMA) only reach the low 4 GiB:
@@ -38,6 +40,7 @@ mod platform {
             // SAFETY: coreboot's (or the FIT handoff's copied) devicetree.
             unsafe { core::slice::from_raw_parts(address as *const u8, size as usize) }
         }));
+        usb::set_init_done_gpio(cb_info.gpio("XHCI init done"));
         // TPM and touchpad: bound with the other peripherals before measured
         // boot is set up, so the TPM backs the TCG protocols.
         config.peripherals.extend(i2c::peripherals());
@@ -47,5 +50,6 @@ mod platform {
     pub fn init_devices() {
         ec::init();
         ufs::init();
+        usb::init();
     }
 }

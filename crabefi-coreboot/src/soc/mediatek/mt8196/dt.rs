@@ -64,6 +64,8 @@ pub struct Regulator {
 #[derive(Clone, Debug, Default)]
 pub struct Board {
     pub i2c: Vec<I2cBus>,
+    /// (xHCI host, IPPC) of the primary USB controller.
+    pub xhci: Option<(u64, u64)>,
     pub ufs: Option<u64>,
     /// SPI controller of the ChromeOS EC with the keyboard.
     pub ec_spi: Option<u64>,
@@ -89,8 +91,9 @@ pub fn init(fdt: Option<&[u8]>) {
         }
     };
     log::info!(
-        "MT8196 board: {} I2C buses, UFS {:x?}, EC SPI {:x?}",
+        "MT8196 board: {} I2C buses, xHCI {:x?}, UFS {:x?}, EC SPI {:x?}",
         board.i2c.len(),
+        board.xhci,
         board.ufs,
         board.ec_spi,
     );
@@ -153,6 +156,15 @@ fn regs64(node: Node<'_, '_>) -> Vec<(u64, u64)> {
         .collect()
 }
 
+/// Named `reg` entry (`reg-names`).
+fn named_reg(node: Node<'_, '_>, name: &str) -> Option<u64> {
+    let names = node.property("reg-names")?.value;
+    let index = names
+        .split(|&b| b == 0)
+        .position(|n| n == name.as_bytes())?;
+    regs64(node).get(index).map(|&(base, _)| base)
+}
+
 fn parse(dt: &fdt::Fdt<'_>) -> Board {
     let mut board = Board::default();
     let pio = dt
@@ -164,6 +176,16 @@ fn parse(dt: &fdt::Fdt<'_>) -> Board {
         if compatible_with(node, "mediatek,mt8188-i2c") {
             if let Some(bus) = parse_i2c(dt, node, pio) {
                 board.i2c.push(bus);
+            }
+        } else if compatible_with(node, "mediatek,mtu3")
+            && board.xhci.is_none()
+            && node.property("dr_mode").and_then(|p| p.as_str()) == Some("host")
+        {
+            // The xHCI child sits at the start of the mtu3 `ranges` window.
+            let ranges = cells(node, "ranges");
+            let ippc = named_reg(node, "ippc");
+            if let (Some(&[_, _, high, low, ..]), Some(ippc)) = (ranges.get(..4), ippc) {
+                board.xhci = Some(((u64::from(high) << 32) | u64::from(low), ippc));
             }
         } else if compatible_with(node, "mediatek,mt8196-ufshci") {
             board.ufs = regs64(node).first().map(|&(base, _)| base);
