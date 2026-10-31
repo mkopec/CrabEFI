@@ -81,6 +81,24 @@ pub enum Machine {
     Virt,
 }
 
+/// Most verbose log level compiled into the payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum MaxLogLevel {
+    Error,
+    Warn,
+    Info,
+}
+
+impl MaxLogLevel {
+    fn feature(self) -> &'static str {
+        match self {
+            MaxLogLevel::Error => "max-log-error",
+            MaxLogLevel::Warn => "max-log-warn",
+            MaxLogLevel::Info => "max-log-info",
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "crabefi", bin_name = "crabefi")]
 #[command(about = "CrabEFI build and test automation")]
@@ -116,6 +134,11 @@ enum Commands {
         /// Build the 64-bit x86 entry for u-root/LinuxBoot (not coreboot)
         #[arg(long)]
         entry64: bool,
+
+        /// Compile out log messages more verbose than this level (quiet
+        /// production firmware)
+        #[arg(long, value_enum)]
+        max_log_level: Option<MaxLogLevel>,
     },
 
     /// Regenerate the checked-in Cargo runtime bundle for one architecture
@@ -307,7 +330,8 @@ fn main() -> Result<()> {
             release,
             ui,
             entry64,
-        } => cmd_build_with_entry(release, ui, arch, machine, entry64),
+            max_log_level,
+        } => cmd_build_with_entry(release, ui, arch, machine, entry64, max_log_level),
         Commands::BundleRuntime { secure_boot } => runtime::bundle(arch, secure_boot),
         Commands::Run {
             coreboot_rom,
@@ -384,7 +408,7 @@ fn main() -> Result<()> {
 
 // Native coreboot run/test/screenshot commands always use the default entry.
 fn cmd_build(release: bool, ui: bool, arch: Arch, machine: Machine) -> Result<()> {
-    cmd_build_with_entry(release, ui, arch, machine, false)
+    cmd_build_with_entry(release, ui, arch, machine, false, None)
 }
 
 fn cmd_build_with_entry(
@@ -393,6 +417,7 @@ fn cmd_build_with_entry(
     arch: Arch,
     machine: Machine,
     entry64: bool,
+    max_log_level: Option<MaxLogLevel>,
 ) -> Result<()> {
     if entry64 && arch != Arch::X86_64 {
         bail!("--entry64 is only supported on x86-64");
@@ -429,6 +454,9 @@ fn cmd_build_with_entry(
     let mut features = vec!["external-runtime-image"];
     if ui {
         features.push("ui");
+    }
+    if let Some(level) = max_log_level {
+        features.push(level.feature());
     }
     if entry64 {
         features.push("entry64");
@@ -1130,7 +1158,8 @@ mod entry_tests {
     #[test]
     fn entry64_rejects_other_architectures_before_building() {
         for arch in [Arch::Aarch64, Arch::Riscv64] {
-            let err = cmd_build_with_entry(true, false, arch, Machine::Sbsa, true).unwrap_err();
+            let err =
+                cmd_build_with_entry(true, false, arch, Machine::Sbsa, true, None).unwrap_err();
             assert!(
                 err.to_string()
                     .contains("--entry64 is only supported on x86-64")
