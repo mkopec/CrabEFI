@@ -20,6 +20,8 @@ fn controllers_come_from_the_devicetree() {
     // The EC with the keyboard, not the fingerprint EC on spi@16120000.
     assert_eq!(board.ec_spi, Some(0x1613_0000));
     assert_eq!(board.ec_keymap, [0x0001_007d, 0x0102_001e, 0x0300_002a]);
+    // Owned by the firmware although the OS's node is disabled.
+    assert_eq!(board.nor, Some(0x1634_0000));
 }
 
 #[test]
