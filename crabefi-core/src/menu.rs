@@ -77,6 +77,8 @@ pub enum BootEntryKind {
 
     /// BLS Type #1 - direct Linux boot
     BlsLinux {
+        /// Optional device tree on the same filesystem as the kernel.
+        devicetree_path: String<128>,
         /// Path to Linux kernel
         linux_path: String<128>,
         /// The initrds, in order
@@ -563,6 +565,7 @@ fn scan_partition_for_entries(
                     partition_num,
                     partition.clone(),
                     BootEntryKind::BlsLinux {
+                        devicetree_path: bls_entry.devicetree.clone(),
                         linux_path: fat_path.clone(),
                         initrd_paths: initrd_fat_paths,
                         cmdline: bls_entry.options.clone(),
