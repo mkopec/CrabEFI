@@ -159,6 +159,7 @@ dependencies = [
  "log",
  "r-efi",
  "sha2 0.10.9",
+ "spin",
  "x86_64",
  "zerocopy",
 ]

@@ -6,11 +6,14 @@
 //! clocks and read timing are left as coreboot's bootblock configured them.
 //!
 //! The variable store receives only the bounded FMAP variable region (`NVRAM`,
-//! `SMMSTORE` or `RW_NVRAM`).
+//! `SMMSTORE` or `RW_NVRAM`). The capsule backend shares the same controller
+//! through `FirmwareStorage`; its existing signed RMAP/FMAP policy selects
+//! the firmware regions to update.
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, sync::Arc};
 use crabefi::{FirmwareStorage, StorageBackend, StorageError};
 use crabefi_hw::mediatek::nor::{self, MtkNor};
+use spin::Mutex;
 
 /// Clock controllers holding the flash clock gates (runtime ungating).
 const TOPCKGEN: u64 = 0x1000_0000;
@@ -135,9 +138,48 @@ impl FirmwareStorage for Mt8196Nor {
     }
 }
 
+/// A boot-only handle sharing the controller with the variable store.
+struct FirmwareAccess(Arc<Mutex<Mt8196Nor>>);
+
+impl FirmwareAccess {
+    fn with_controller<R>(
+        &self,
+        operation: impl FnOnce(&mut Mt8196Nor) -> Result<R, StorageError>,
+    ) -> Result<R, StorageError> {
+        let mut nor = self.0.try_lock().ok_or(StorageError::IoError)?;
+        operation(&mut nor)
+    }
+}
+
+impl FirmwareStorage for FirmwareAccess {
+    fn name(&self) -> &str {
+        "MT8196 SPI NOR"
+    }
+
+    fn capacity(&self) -> Option<u64> {
+        self.0.try_lock()?.capacity()
+    }
+
+    fn enable_writes(&mut self) -> Result<(), StorageError> {
+        self.with_controller(Mt8196Nor::enable_writes)
+    }
+
+    fn read(&mut self, offset: u64, buffer: &mut [u8]) -> Result<(), StorageError> {
+        self.with_controller(|nor| nor.read(offset, buffer))
+    }
+
+    fn write(&mut self, offset: u64, data: &[u8]) -> Result<(), StorageError> {
+        self.with_controller(|nor| nor.write(offset, data))
+    }
+
+    fn erase(&mut self, offset: u64, size: u64) -> Result<(), StorageError> {
+        self.with_controller(|nor| nor.erase(offset, size))
+    }
+}
+
 /// The FMAP variable region of the NOR flash.
 pub struct VariableRegion {
-    nor: Mt8196Nor,
+    nor: Arc<Mutex<Mt8196Nor>>,
     /// SFLASH controller base, for the runtime handoff.
     sflash: u64,
     base: u64,
@@ -168,22 +210,35 @@ impl StorageBackend for VariableRegion {
 
     fn read(&mut self, offset: u32, buffer: &mut [u8]) -> Result<(), StorageError> {
         bounded(self.size, offset, buffer.len())?;
-        self.nor.read_at(self.base + u64::from(offset), buffer)
+        self.nor
+            .try_lock()
+            .ok_or(StorageError::IoError)?
+            .read_at(self.base + u64::from(offset), buffer)
     }
 
     fn program(&mut self, offset: u32, data: &[u8]) -> Result<(), StorageError> {
         bounded(self.size, offset, data.len())?;
-        self.nor.program_at(self.base + u64::from(offset), data)
+        self.nor
+            .try_lock()
+            .ok_or(StorageError::IoError)?
+            .program_at(self.base + u64::from(offset), data)
     }
 
     fn erase(&mut self, offset: u32, size: u32) -> Result<(), StorageError> {
         bounded(self.size, offset, size as usize)?;
         self.nor
+            .try_lock()
+            .ok_or(StorageError::IoError)?
             .erase_at(self.base + u64::from(offset), u64::from(size))
     }
 }
 
 impl VariableRegion {
+    /// Give the capsule backend access to the same controller and DMA buffer.
+    pub fn firmware_storage(&self) -> Box<dyn FirmwareStorage> {
+        Box::new(FirmwareAccess(Arc::clone(&self.nor)))
+    }
+
     /// Runtime in-place persistence of this region (ABI handoff record) and
     /// the device windows it needs after ExitBootServices.
     pub fn runtime_config(
@@ -282,7 +337,7 @@ pub fn variable_region(
         }
     );
     Some(Box::leak(Box::new(VariableRegion {
-        nor,
+        nor: Arc::new(Mutex::new(nor)),
         sflash: base,
         base: region.offset,
         size: region.size,
@@ -301,7 +356,9 @@ mod tests {
         let base = registers.as_mut_ptr() as u64;
         VariableRegion {
             // SAFETY: owned host memory standing in for the registers.
-            nor: unsafe { Mt8196Nor::new(base, 0x800000) }.unwrap(),
+            nor: Arc::new(Mutex::new(
+                unsafe { Mt8196Nor::new(base, 0x800000) }.unwrap(),
+            )),
             sflash: base,
             base: 0x7c0000,
             size: 0x40000,
@@ -314,6 +371,8 @@ mod tests {
         fn assert_send<T: Send>() {}
         assert_send::<VariableRegion>();
         let mut region = region();
+        let flash = region.firmware_storage();
+        assert_eq!(flash.capacity(), Some(0x800000));
         assert_eq!(StorageBackend::size(&region), 0x40000);
         assert_eq!(
             StorageBackend::read(&mut region, 0x40000, &mut [0]),
@@ -326,6 +385,29 @@ mod tests {
         assert_eq!(
             StorageBackend::erase(&mut region, 0x40000, SECTOR),
             Err(StorageError::InvalidArgument)
+        );
+    }
+
+    #[test]
+    fn capsule_and_variables_share_exclusive_controller_access() {
+        let mut region = region();
+        let mut flash = region.firmware_storage();
+        let controller = Arc::clone(&region.nor);
+        let _guard = controller.lock();
+        assert_eq!(flash.read(0, &mut [0]), Err(StorageError::IoError));
+        assert_eq!(flash.write(0, &[0]), Err(StorageError::IoError));
+        assert_eq!(flash.erase(0, SECTOR.into()), Err(StorageError::IoError));
+        assert_eq!(
+            StorageBackend::read(&mut region, 0, &mut [0]),
+            Err(StorageError::IoError)
+        );
+        assert_eq!(
+            StorageBackend::program(&mut region, 0, &[0]),
+            Err(StorageError::IoError)
+        );
+        assert_eq!(
+            StorageBackend::erase(&mut region, 0, SECTOR),
+            Err(StorageError::IoError)
         );
     }
 }

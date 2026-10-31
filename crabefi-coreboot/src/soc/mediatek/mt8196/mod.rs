@@ -25,6 +25,8 @@ pub use self::platform::*;
 
 #[cfg(target_arch = "aarch64")]
 mod platform {
+    use alloc::boxed::Box;
+
     use super::{dt, ec, i2c, nor, ufs, usb};
     use crate::tables::CorebootInfo;
 
@@ -35,10 +37,14 @@ mod platform {
         crabefi::efi::allocator::set_any_pages_preferred_max(0xffff_ffff);
     }
 
-    /// Describe the board and attach its I2C peripherals and variable store.
-    /// Runs after the heap is up (the FMAP lookup and the devicetree parse
-    /// allocate), before init_platform().
-    pub fn configure(cb_info: &CorebootInfo, config: &mut crabefi::PlatformConfig<'_>) {
+    /// Describe the board and attach its I2C peripherals, variable store and
+    /// capsule flash access. Runs after the heap is up (the FMAP lookup and
+    /// the devicetree parse allocate), before init_platform().
+    pub fn configure(
+        cb_info: &CorebootInfo,
+        config: &mut crabefi::PlatformConfig<'_>,
+        capsule_storage: &mut Option<Box<dyn crabefi::FirmwareStorage>>,
+    ) {
         dt::init(cb_info.devicetree.map(|(address, size)| {
             // SAFETY: coreboot's (or the FIT handoff's copied) devicetree.
             unsafe { core::slice::from_raw_parts(address as *const u8, size as usize) }
@@ -49,7 +55,7 @@ mod platform {
         config.peripherals.extend(i2c::peripherals());
 
         // The NOR controller is not memory-mapped flash. Variable storage
-        // gets a bounded region.
+        // gets a bounded region; the capsule backend shares the controller.
         if cb_info.boot_media.is_none() {
             log::warn!("MT8196: coreboot tables have no boot media record");
         }
@@ -61,6 +67,7 @@ mod platform {
                 // The OS does not drive this flash (its DT node is disabled),
                 // so runtime SetVariable writes it in place.
                 (config.runtime.nvram, config.runtime.external_ranges) = region.runtime_config();
+                *capsule_storage = Some(region.firmware_storage());
                 crabefi::VariableStorage::Platform(region)
             }
             None => crabefi::VariableStorage::None,
