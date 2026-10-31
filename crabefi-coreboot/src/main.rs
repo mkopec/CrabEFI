@@ -23,6 +23,9 @@ static HOST_CHECK_ALLOCATOR: linked_list_allocator::LockedHeap =
 #[cfg(not(target_arch = "riscv64"))]
 mod acpi;
 #[cfg(target_arch = "aarch64")]
+#[path = "arch/aarch64/dma_pool.rs"]
+mod arch_dma_pool;
+#[cfg(target_arch = "aarch64")]
 #[path = "arch/aarch64/entry.rs"]
 mod arch_entry;
 #[cfg(target_arch = "riscv64")]
@@ -1184,6 +1187,11 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
     // call is a no-op.
     // ================================================================
     crabefi::efi::allocator::init_from_platform(config.memory_map);
+    // Devices that do not snoop the CPU caches get non-cacheable buffers.
+    #[cfg(target_arch = "aarch64")]
+    if coreboot_devicetree(&cb_info).is_some_and(|fdt| !devicetree::any_dma_coherent(fdt)) {
+        arch_dma_pool::register();
+    }
     match crabefi::heap::init() {
         Ok(()) | Err(crabefi::heap::HeapInitError::AlreadyInitialized) => {
             config.heap_pre_initialized = true;

@@ -41,6 +41,17 @@ pub fn uart_kind(fdt: &[u8], base: u64) -> Option<UartKind> {
     }
 }
 
+/// Whether any device is described as DMA-coherent. Linux treats devices
+/// without `dma-coherent` as not snooping the CPU caches; a tree in which no
+/// device is coherent describes a SoC whose DMA masters all need
+/// non-cacheable buffers.
+pub fn any_dma_coherent(fdt: &[u8]) -> bool {
+    fdt::Fdt::new(fdt).is_ok_and(|dt| {
+        dt.all_nodes()
+            .any(|node| node.property("dma-coherent").is_some())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,5 +80,12 @@ mod tests {
         assert_eq!(uart_kind(SOC_NONCOHERENT, 0x1601_0000), None);
         assert_eq!(uart_kind(PL011_COHERENT, 0x0910_0000), None);
         assert_eq!(uart_kind(&[0u8; 16], 0x1600_0000), None);
+    }
+
+    #[test]
+    fn coherency_needs_a_dma_coherent_device() {
+        assert!(!any_dma_coherent(SOC_NONCOHERENT));
+        assert!(any_dma_coherent(PL011_COHERENT));
+        assert!(!any_dma_coherent(&[0u8; 16]));
     }
 }
