@@ -140,6 +140,8 @@ impl<T, const N: usize> ControllerRegistry<T, N> {
     }
 }
 pub mod block;
+#[cfg(feature = "cros-ec")]
+pub mod cros_ec;
 #[cfg(feature = "elan-i2c")]
 pub(crate) mod elan;
 #[cfg(feature = "hid-i2c")]
