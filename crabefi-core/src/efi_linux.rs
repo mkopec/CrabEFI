@@ -387,10 +387,15 @@ pub(crate) fn boot_entry(
         storage::with_disk(entry.storage, |disk| disk.info()).map_err(|_| Status::DEVICE_ERROR)?;
     let path_info = boot::device_path_info_from_entry(entry);
     boot::install_block_io_protocols(entry.storage, info, &path_info);
-    let _dtb = tree
+    // The entry's devicetree replaces the platform's: add the firmware's nodes.
+    let fixed = tree
         .as_ref()
-        .map(|bytes| DtbTable::install(bytes.as_slice()))
-        .transpose()?;
+        .and_then(|bytes| crate::efi::protocols::dt_fixup::apply_platform_fixups(bytes.as_slice()));
+    let _dtb = match (&fixed, &tree) {
+        (Some(fixed), _) => Some(DtbTable::install(fixed)?),
+        (None, Some(bytes)) => Some(DtbTable::install(bytes.as_slice())?),
+        (None, None) => None,
+    };
     let initrd = data.map(InitrdProvider::install).transpose()?;
     log::info!("Linux EFI: starting {kernel}, command line: {cmdline}");
     let result = boot::try_boot_file_from_esp(
