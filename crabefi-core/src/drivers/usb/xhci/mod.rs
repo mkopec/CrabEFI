@@ -20,7 +20,8 @@ pub use slots::UsbSlot;
 
 use crate::barrier;
 use crate::drivers::mmio::MmioRegion;
-use crate::drivers::pci::PciAddress;
+use crate::drivers::pci::{self, PciAddress};
+use crate::efi::dma::{DmaCoherency, DmaDomain};
 use crate::time::wait_for;
 use core::ptr;
 use xhci::accessor::Mapper;
@@ -94,10 +95,33 @@ const XHCI_MMIO_SIZE: usize = 0x10000;
 /// and ensures all slot accesses go through bounds-checked `.get()`.
 pub const MAX_SLOTS: usize = 16;
 
+/// Bus attachment and DMA routing for an xHCI controller.
+#[derive(Clone, Copy)]
+pub(super) enum Attachment {
+    Pci(PciAddress),
+    Mmio(DmaDomain),
+}
+
+impl Attachment {
+    fn dma_domain(self) -> Option<DmaDomain> {
+        match self {
+            Self::Pci(address) => pci::dma_domain(address),
+            Self::Mmio(domain) => Some(domain),
+        }
+    }
+}
+
+/// Ring and context allocations currently require coherent identity DMA.
+fn mmio_dma_supported(domain: DmaDomain) -> bool {
+    domain.coherency == DmaCoherency::Coherent
+        && domain.cpu_base == domain.device_base
+        && domain.size != 0
+        && domain.cpu_base.checked_add(domain.size).is_some()
+}
+
 /// xHCI Controller
 pub struct XhciController {
-    /// PCI address (bus:device.function)
-    pci_address: PciAddress,
+    attachment: Attachment,
     /// MMIO region (kept alive so the mapping is not dropped)
     #[allow(dead_code)]
     // Retained for the mapping lifetime; register I/O goes through `registers`.
@@ -233,9 +257,12 @@ impl XhciController {
             .and_then(|s| s.as_mut())
     }
 
-    /// Get the PCI address of this controller
-    pub fn pci_address(&self) -> PciAddress {
-        self.pci_address
+    /// Get the PCI address, if this controller is attached through PCI.
+    pub fn pci_address(&self) -> Option<PciAddress> {
+        match self.attachment {
+            Attachment::Pci(address) => Some(address),
+            Attachment::Mmio(_) => None,
+        }
     }
 
     /// Clean up the controller before handing off to the OS
@@ -362,6 +389,32 @@ mod tests {
             found.push(id)
         });
         assert_eq!(found, [1, MAX_SLOTS as u8]);
+    }
+
+    #[test]
+    fn mmio_requires_coherent_identity_dma() {
+        use crate::efi::dma::{DmaCoherency, DmaDomain};
+
+        let domain = DmaDomain {
+            cpu_base: 0x8000_0000,
+            device_base: 0x8000_0000,
+            size: 0x8000_0000,
+            coherency: DmaCoherency::Coherent,
+        };
+        assert!(super::mmio_dma_supported(domain));
+        assert!(!super::mmio_dma_supported(DmaDomain {
+            coherency: DmaCoherency::NonCoherent,
+            ..domain
+        }));
+        assert!(!super::mmio_dma_supported(DmaDomain {
+            device_base: 0,
+            ..domain
+        }));
+        assert!(!super::mmio_dma_supported(DmaDomain { size: 0, ..domain }));
+        assert!(!super::mmio_dma_supported(DmaDomain {
+            size: u64::MAX,
+            ..domain
+        }));
     }
 
     #[test]
