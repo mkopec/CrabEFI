@@ -351,6 +351,85 @@ pub fn create_usb_partition_device_path(
     allocate_device_path(dp)
 }
 
+/// Vendor-defined hardware node identifying a platform block device (UEFI 10.3.2.4).
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct PlatformDevicePathNode {
+    pub r#type: u8,
+    pub sub_type: u8,
+    pub length: [u8; 2],
+    pub vendor_guid: [u8; 16],
+    /// Index in the platform block device table (vendor-defined data).
+    pub index: u32,
+}
+
+/// Sub-type for vendor-defined hardware device path
+const SUBTYPE_HW_VENDOR: u8 = 0x04;
+
+/// CrabEFI platform block device vendor GUID {c7a3e0b1-4f2d-4c8a-9b1e-5d6f7a8b9c0d}.
+const PLATFORM_BLOCK_VENDOR_GUID: [u8; 16] = [
+    0xb1, 0xe0, 0xa3, 0xc7, 0x2d, 0x4f, 0x8a, 0x4c, 0x9b, 0x1e, 0x5d, 0x6f, 0x7a, 0x8b, 0x9c, 0x0d,
+];
+
+impl PlatformDevicePathNode {
+    const fn new(index: usize) -> Self {
+        Self {
+            r#type: TYPE_HARDWARE,
+            sub_type: SUBTYPE_HW_VENDOR,
+            length: (core::mem::size_of::<Self>() as u16).to_le_bytes(),
+            vendor_guid: PLATFORM_BLOCK_VENDOR_GUID,
+            index: index as u32,
+        }
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+struct PlatformDevicePath {
+    vendor: PlatformDevicePathNode,
+    end: End,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+struct PlatformPartitionDevicePath {
+    vendor: PlatformDevicePathNode,
+    hard_drive: HardDriveMedia,
+    end: End,
+}
+
+/// Whole-disk path for a platform block device: VenHw(guid, index)/End
+pub fn create_platform_device_path(index: usize) -> *mut Protocol {
+    log::debug!("Created platform device path: VenHw({index})");
+    allocate_device_path(PlatformDevicePath {
+        vendor: PlatformDevicePathNode::new(index),
+        end: create_end_node(),
+    })
+}
+
+/// Partition path for a platform block device: VenHw(guid, index)/HD(...)/End
+pub fn create_platform_partition_device_path(
+    index: usize,
+    partition_number: u32,
+    partition_start: u64,
+    partition_size: u64,
+    partition_guid: &[u8; 16],
+) -> *mut Protocol {
+    log::debug!(
+        "Created platform partition device path: VenHw({index})/HD({partition_number},{partition_start},{partition_size})"
+    );
+    allocate_device_path(PlatformPartitionDevicePath {
+        vendor: PlatformDevicePathNode::new(index),
+        hard_drive: create_hard_drive_node(
+            partition_number,
+            partition_start,
+            partition_size,
+            partition_guid,
+        ),
+        end: create_end_node(),
+    })
+}
+
 /// Create a minimal "end-only" device path
 ///
 /// This is the simplest possible device path, just an end node.
@@ -1088,12 +1167,7 @@ pub fn create_disk_device_path(info: &DevicePathInfo) -> *mut Protocol {
             pci_device,
             pci_function,
         } => create_usb_device_path(pci_device, pci_function, 0),
-        DevicePathInfo::Platform { .. } => {
-            // A proper vendor-defined node can be added later.
-            // Returning null causes the caller to skip device path installation,
-            // which is safe — the device is still bootable via BlockIO.
-            core::ptr::null_mut()
-        }
+        DevicePathInfo::Platform { index } => create_platform_device_path(index),
     }
 }
 
@@ -1182,6 +1256,12 @@ pub fn create_partition_device_path(
             partition_size,
             partition_guid,
         ),
-        DevicePathInfo::Platform { .. } => core::ptr::null_mut(),
+        DevicePathInfo::Platform { index } => create_platform_partition_device_path(
+            index,
+            partition_number,
+            partition_start,
+            partition_size,
+            partition_guid,
+        ),
     }
 }
