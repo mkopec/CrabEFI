@@ -556,19 +556,24 @@ pub struct SerialConfig {
 /// [`SerialConfig::regwidth`] for the MMIO register stride, and
 /// [`SerialConfig::input_hertz`] for an accurate baud divisor.
 pub fn init_from_config(info: &SerialConfig) {
+    // Preserve the existing QEMU/SBSA platform default. This is NOT UART
+    // detection: PL011 construction assumes a configured PL011 peripheral.
+    // Platforms with a known 16550 UART must use the explicit initializer.
+    #[cfg(target_arch = "aarch64")]
     if info.mmio {
-        // MMIO UART - could be 16550 or PL011
-        // On aarch64 SBSA platforms, it's typically PL011
-        #[cfg(target_arch = "aarch64")]
-        {
-            let mut port = Pl011Port::new(info.baseaddr);
-            if port.functional {
-                let _ = port.write_str("\r\n[CrabEFI] PL011 serial initialized\r\n");
-                SERIAL.borrow_mut().driver = Some(AnySerial::Pl011(port));
-                return;
-            }
-        }
+        let mut port = Pl011Port::new(info.baseaddr);
+        let _ = port.write_str("\r\n[CrabEFI] PL011 serial initialized\r\n");
+        SERIAL.borrow_mut().driver = Some(AnySerial::Pl011(port));
+        return;
+    }
+    init_16550_from_config(info);
+}
 
+/// Initialize a known 16550-compatible UART without probing another UART type.
+/// MMIO register spacing, baud and clock come from the platform configuration.
+/// In particular, MediaTek UARTs must not be accessed as PL011 peripherals.
+pub fn init_16550_from_config(info: &SerialConfig) {
+    if info.mmio {
         // MMIO 16550 (or 16550-compatible).
         // `regwidth` tells us how far apart registers are; default to 1-byte
         // stride when the platform doesn't specify it (regwidth == 0).
@@ -701,4 +706,34 @@ macro_rules! serial_print {
 macro_rules! serial_println {
     () => ($crate::serial_print!("\n"));
     ($($arg:tt)*) => ($crate::serial_print!("{}\n", format_args!($($arg)*)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mmio_16550_uses_lsr_and_stride_not_pl011_flags() {
+        let mut registers = [0u32; 8];
+        registers[5] = u32::from(LSR_TX_EMPTY);
+        // PL011 would read offset 0x18 as FR and interpret bit 5 as TXFF.
+        // For this 16550 register layout it is MSR, not a transmit status.
+        registers[6] = 0x20;
+        let mut port = SerialPort {
+            backend: Uart16550Backend::Mmio {
+                base: registers.as_mut_ptr() as u64,
+                reg_stride: 4,
+            },
+            functional: false,
+        };
+        assert!(port.init_16550(115200, 26_000_000));
+        assert_eq!(registers[0], 14); // DLL
+        assert_eq!(registers[3], 3); // 8N1, DLAB clear
+        assert_eq!(registers[2], 0xc7); // FCR
+        assert_eq!(registers[4], 0x0b); // MCR
+        port.write_byte(b'X');
+        assert!(port.functional);
+        assert_eq!(registers[0], u32::from(b'X'));
+        assert_eq!(registers[6], 0x20);
+    }
 }
