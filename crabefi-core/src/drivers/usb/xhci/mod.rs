@@ -118,6 +118,9 @@ pub struct XhciController {
     num_scratchpad_bufs: u16,
     /// Command ring
     cmd_ring: TrbRing,
+    /// Control-transfer data stage buffer (wLength is at most 64 KiB), so
+    /// callers' heap buffers are never handed to the controller.
+    control_buffer: u64,
     /// Event ring segment table
     erst: u64,
     /// Event ring
