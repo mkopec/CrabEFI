@@ -11,7 +11,7 @@ default = ["bundled-runtime-image"]
 bundled-runtime-image = ["crabefi/bundled-runtime-image"]
 external-runtime-image = []
 # MediaTek MT8196 SoC drivers for the board devices in the devicetree.
-mt8196 = ["crabefi/cros-ec"]
+mt8196 = ["dep:spin", "crabefi/cros-ec"]
 # Use the long-mode RDI entry for u-root/LinuxBoot instead of coreboot's
 # default 32-bit stack-argument entry. Only supported on x86-64.
 entry64 = []
@@ -37,6 +37,7 @@ crabefi = { package = "crabefi-core", path = "../crabefi-core", features = [
 log = "0.4"
 r-efi = "7.1"
 heapless = "0.9"
+spin = { version = "0.12", optional = true }
 zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
 
 # ACPI table parsing and AML interpreter for platform device discovery.

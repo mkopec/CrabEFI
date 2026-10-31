@@ -1289,9 +1289,9 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
         }
     }
 
-    // MT8196 board devices and variable store.
+    // MT8196 board devices, variable store and capsule flash access.
     #[cfg(all(target_arch = "aarch64", feature = "mt8196"))]
-    mt8196::configure(&cb_info, &mut config);
+    mt8196::configure(&cb_info, &mut config, &mut capsule_backend.storage);
 
     config.capsule_backend = Some(&mut capsule_backend);
 
