@@ -641,6 +641,38 @@ impl MemoryAllocator {
         Ok(())
     }
 
+    /// Describe a device window the runtime image keeps using after
+    /// ExitBootServices: `MemoryMappedIo` with `EFI_MEMORY_RUNTIME`, so the
+    /// OS maps it for SetVirtualAddressMap. Refuses any overlap.
+    pub fn add_runtime_mmio(
+        &mut self,
+        physical_start: u64,
+        num_pages: u64,
+    ) -> Result<(), efi::Status> {
+        let end = num_pages
+            .checked_mul(PAGE_SIZE)
+            .and_then(|size| physical_start.checked_add(size))
+            .ok_or(efi::Status::INVALID_PARAMETER)?;
+        if self.entries.iter().any(|entry| {
+            entry.physical_start < end
+                && physical_start < entry.physical_start + entry.number_of_pages * PAGE_SIZE
+        }) {
+            return Err(efi::Status::ACCESS_DENIED);
+        }
+        let desc = memory_descriptor(
+            MemoryType::MemoryMappedIo,
+            physical_start,
+            num_pages,
+            attributes::EFI_MEMORY_UC | attributes::EFI_MEMORY_RUNTIME,
+        );
+        self.entries
+            .push(desc)
+            .map_err(|_| efi::Status::OUT_OF_RESOURCES)?;
+        self.map_key += 1;
+        self.sort_entries();
+        Ok(())
+    }
+
     /// Mark a memory region as ACPI Reclaim Memory
     ///
     /// This function finds the region containing the address (any memory type),
@@ -1460,6 +1492,11 @@ pub fn force_add_region(
 /// firmware allocations, including DMA-visible heap buffers, stay low.
 pub fn set_any_pages_preferred_max(max_address: u64) {
     ALLOCATOR.with_mut(|alloc| alloc.any_pages_preferred_max = max_address);
+}
+
+/// Add a runtime-accessible MMIO window; see [`MemoryAllocator::add_runtime_mmio`].
+pub fn add_runtime_mmio(physical_start: u64, num_pages: u64) -> Result<(), efi::Status> {
+    ALLOCATOR.with_mut(|alloc| alloc.add_runtime_mmio(physical_start, num_pages))
 }
 
 /// Carve a physical range out of its containing map entry as `memory_type`.
