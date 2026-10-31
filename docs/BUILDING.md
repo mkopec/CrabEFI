@@ -58,6 +58,10 @@ The output ELF is at `target/<triple>/release/crabefi`.
 `--max-log-level error|warn|info` compiles out more verbose log messages, for
 quiet production firmware.
 
+On aarch64, `--fit-dtb DTB...` also packages the payload as a coreboot FIT
+(`CONFIG_PAYLOAD_FIT`) with those board devicetrees; coreboot passes the one
+matching the board.
+
 The default x86 build keeps coreboot's **32-bit protected-mode entry** and
 works with unmodified coreboot and the existing Q35 firmware fixture.
 

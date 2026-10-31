@@ -17,6 +17,7 @@
 //! ```
 
 mod disk;
+mod fit;
 mod qemu;
 mod rom;
 mod runtime;
@@ -141,6 +142,11 @@ enum Commands {
         /// production firmware)
         #[arg(long, value_enum)]
         max_log_level: Option<MaxLogLevel>,
+
+        /// Also package the aarch64 payload as a FIT (coreboot PAYLOAD_FIT)
+        /// with these board devicetrees; coreboot passes the matching one.
+        #[arg(long, num_args = 1..)]
+        fit_dtb: Vec<PathBuf>,
     },
 
     /// Regenerate the checked-in Cargo runtime bundle for one architecture
@@ -333,7 +339,24 @@ fn main() -> Result<()> {
             ui,
             entry64,
             max_log_level,
-        } => cmd_build_with_entry(release, ui, arch, machine, entry64, max_log_level),
+            fit_dtb,
+        } => {
+            if !fit_dtb.is_empty() && arch != Arch::Aarch64 {
+                bail!("--fit-dtb is only supported on aarch64");
+            }
+            cmd_build_with_entry(release, ui, arch, machine, entry64, max_log_level)?;
+            if !fit_dtb.is_empty() {
+                let mode = if release { "release" } else { "debug" };
+                let elf =
+                    project_root().join(format!("target/aarch64-unknown-none/{mode}/crabefi"));
+                let base = u64::from_str_radix(
+                    aarch64_payload_base(machine).trim_start_matches("0x"),
+                    16,
+                )?;
+                println!("Built: {}", fit::package(&elf, base, &fit_dtb)?.display());
+            }
+            Ok(())
+        }
         Commands::BundleRuntime { secure_boot } => runtime::bundle(arch, secure_boot),
         Commands::Run {
             coreboot_rom,
