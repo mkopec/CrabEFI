@@ -372,15 +372,16 @@ impl<I: I2c> HidI2c<I> {
             .map_err(Error::Bus)?;
         let descriptor =
             Descriptor::read_from_bytes(&raw).map_err(|_| Error::UnsupportedDescriptor)?;
-        let report_length = usize::from(descriptor.report_descriptor_length.get());
-        let max_input = usize::from(descriptor.max_input_length.get());
         if descriptor.length.get() != 30
             || descriptor.version.get() != 0x0100
-            || !(1..=MAX_REPORT_DESCRIPTOR).contains(&report_length)
-            || !(3..=MAX_INPUT).contains(&max_input)
+            || !(1..=MAX_REPORT_DESCRIPTOR)
+                .contains(&usize::from(descriptor.report_descriptor_length.get()))
+            || !(3..=MAX_INPUT).contains(&usize::from(descriptor.max_input_length.get()))
         {
             return Err(Error::UnsupportedDescriptor);
         }
+        let report_length = usize::from(descriptor.report_descriptor_length.get());
+        let max_input = usize::from(descriptor.max_input_length.get());
         let mut device = Self {
             bus,
             address,
@@ -648,32 +649,140 @@ impl<I: I2c> KeyboardDevice for HidKeyboard<I> {
     }
 }
 
-/// Bind a described HID-over-I2C device as pointer and/or keyboard.
-pub(crate) fn bind(device: I2cPeripheral) {
-    let opened = match (device.interrupt, device.hid_descriptor_register) {
-        (None, _) => Err(Error::NoInterrupt),
-        (_, None) => Err(Error::NoDescriptorRegister),
-        (Some(interrupt), Some(register)) => {
-            HidI2c::<I2cBus>::open(device.bus, device.address, interrupt, register)
-        }
-    };
-    let hid = match opened {
-        Ok(hid) => hid,
-        Err(error) => {
-            log::warn!("HID I2C device at {:#x}: {:?}", device.address, error);
-            return;
-        }
-    };
+/// Whether `register` holds a HID descriptor right now (one read).
+fn descriptor_ready<I: I2c>(bus: &mut I, address: u8, register: u16) -> bool {
+    let mut raw = [0; size_of::<Descriptor>()];
+    bus.write_read(address, &register.to_le_bytes(), &mut raw)
+        .is_ok()
+        && raw[..4] == [30, 0, 0, 1]
+}
+
+/// Register a ready device's pointer and keyboard functions.
+fn register_opened(hid: HidI2c<I2cBus>) -> Option<HidPointer<I2cBus>> {
     let (mouse, keyboard) = (
         hid.mouse.is_some() || hid.touchpad.is_some(),
         hid.keyboard.is_some(),
     );
     let hid = Rc::new(RefCell::new(hid));
-    if mouse {
-        super::pointer::register(Box::new(HidPointer(hid.clone())));
-    }
     if keyboard {
-        super::keyboard_common::register(Box::new(HidKeyboard(hid)));
+        super::keyboard_common::register(Box::new(HidKeyboard(hid.clone())));
+    }
+    mouse.then(|| HidPointer(hid))
+}
+
+/// A device that did not serve its HID descriptor at bind time. Some
+/// touchpads (FocalTech on Google Navi) answer with zeros for seconds after
+/// firmware takes over; keep asking from the pointer poll.
+struct PendingHid {
+    state: Pending,
+    address: u8,
+    register: u16,
+    next: Timeout,
+    tries: u32,
+}
+
+enum Pending {
+    Waiting(I2cBus, Interrupt),
+    Open(HidPointer<I2cBus>),
+    Gone,
+}
+
+/// Retry interval while waiting for the descriptor.
+const PENDING_RETRY_MS: u64 = 250;
+
+impl PointerDevice for PendingHid {
+    fn poll(&mut self) -> Option<PointerReport> {
+        if let Pending::Open(pointer) = &mut self.state {
+            return pointer.poll();
+        }
+        if !matches!(self.state, Pending::Waiting(..)) || !self.next.is_expired() {
+            return None;
+        }
+        self.tries += 1;
+        self.next = Timeout::from_ms(PENDING_RETRY_MS);
+        let Pending::Waiting(bus, _) = &mut self.state else {
+            return None;
+        };
+        if !descriptor_ready(bus, self.address, self.register) {
+            if self.tries.is_multiple_of(40) {
+                log::debug!(
+                    "HID I2C {:#x}: still no descriptor after {} retries",
+                    self.address,
+                    self.tries
+                );
+            }
+            return None;
+        }
+        log::debug!(
+            "HID I2C {:#x}: descriptor appeared after {} retries ({} ms)",
+            self.address,
+            self.tries,
+            u64::from(self.tries) * PENDING_RETRY_MS
+        );
+        let Pending::Waiting(bus, interrupt) = core::mem::replace(&mut self.state, Pending::Gone)
+        else {
+            return None;
+        };
+        match HidI2c::open(bus, self.address, interrupt, self.register) {
+            Ok(hid) => {
+                if let Some(pointer) = register_opened(hid) {
+                    self.state = Pending::Open(pointer);
+                }
+            }
+            Err(error) => log::warn!("HID I2C device at {:#x}: {:?}", self.address, error),
+        }
+        None
+    }
+
+    fn stop(&mut self) {
+        if let Pending::Open(pointer) = &mut self.state {
+            pointer.stop();
+        }
+    }
+}
+
+/// Bind a described HID-over-I2C device as pointer and/or keyboard.
+pub(crate) fn bind(device: I2cPeripheral) {
+    let I2cPeripheral {
+        mut bus,
+        address,
+        interrupt,
+        hid_descriptor_register,
+        ..
+    } = device;
+    let (interrupt, register) = match (interrupt, hid_descriptor_register) {
+        (None, _) => {
+            return log::warn!(
+                "HID I2C device at {address:#x}: {:?}",
+                Error::<()>::NoInterrupt
+            );
+        }
+        (_, None) => {
+            return log::warn!(
+                "HID I2C device at {address:#x}: {:?}",
+                Error::<()>::NoDescriptorRegister
+            );
+        }
+        (Some(interrupt), Some(register)) => (interrupt, register),
+    };
+    if !descriptor_ready(&mut bus, address, register) {
+        log::info!("HID I2C {address:#x}: no descriptor yet; retrying in the background");
+        super::pointer::register(Box::new(PendingHid {
+            state: Pending::Waiting(bus, interrupt),
+            address,
+            register,
+            next: Timeout::from_ms(PENDING_RETRY_MS),
+            tries: 0,
+        }));
+        return;
+    }
+    match HidI2c::<I2cBus>::open(bus, address, interrupt, register) {
+        Ok(hid) => {
+            if let Some(pointer) = register_opened(hid) {
+                super::pointer::register(Box::new(pointer));
+            }
+        }
+        Err(error) => log::warn!("HID I2C device at {address:#x}: {:?}", error),
     }
 }
 
