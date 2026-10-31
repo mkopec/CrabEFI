@@ -554,56 +554,38 @@ pub fn get_enrollment_summary() -> (usize, usize, usize, usize) {
 
 /// Clear all Secure Boot keys and return to Setup Mode
 ///
-/// This is a dangerous operation that clears all enrolled keys.
-/// After clearing, the system returns to Setup Mode and Secure Boot
-/// is disabled.
+/// Firmware setup is the physical-presence authority: delete PK, KEK, db and
+/// dbx from the persistent variable store without authentication, then reset
+/// so the next boot imports the cleared store and starts in Setup Mode.
+/// Default keys are not enrolled again (only a freshly formatted store gets
+/// them). Returns only on failure.
 pub fn clear_all_keys() -> Result<(), AuthError> {
-    log::warn!("Clearing all Secure Boot keys by physical-presence setup action!");
+    use crate::efi::varstore::persistence;
 
-    // Public SetVariable correctly rejects an unsigned PK deletion in User
-    // Mode, even when signature verification has been disabled. Firmware setup
-    // is the physical-presence authority, so remove PK through the privileged
-    // pre-boot persistence/import path first. This transitions the live policy
-    // into Setup Mode; the remaining databases can then use ordinary unsigned
-    // SetVariable deletes.
-    if !is_setup_mode() {
-        let guid = Guid::from_bytes(&EFI_GLOBAL_VARIABLE_GUID);
-        if crate::efi::varstore::persistence::persist_firmware_variable(
-            &guid,
-            PK_NAME,
-            SECURE_BOOT_KEY_ATTRS,
-            &[],
-        )
-        .is_err()
-        {
-            force_refresh_key_databases();
+    log::warn!("Clearing all Secure Boot keys by physical-presence setup action!");
+    if !persistence::is_varstore_writable() {
+        // A volatile store re-enrolls the default keys on every boot.
+        log::error!("Secure Boot keys can only be cleared on a writable persistent store");
+        return Err(AuthError::AccessDenied);
+    }
+    let global = Guid::from_bytes(&EFI_GLOBAL_VARIABLE_GUID);
+    let image_db = Guid::from_bytes(&EFI_IMAGE_SECURITY_DATABASE_GUID);
+    // PK first: once it is gone the platform is in Setup Mode even if a later
+    // deletion fails.
+    for (guid, name) in [
+        (&global, PK_NAME),
+        (&global, KEK_NAME),
+        (&image_db, DB_NAME),
+        (&image_db, DBX_NAME),
+    ] {
+        if let Err(error) = persistence::delete_firmware_variable(guid, name) {
+            log::error!("Failed to clear Secure Boot key variable: {error:?}");
             return Err(AuthError::CryptoError);
         }
-        force_refresh_key_databases();
-        if !is_setup_mode() {
-            return Err(AuthError::AccessDenied);
-        }
     }
-
-    for variable in [
-        SecureBootVariable::Dbx,
-        SecureBootVariable::Db,
-        SecureBootVariable::Kek,
-    ] {
-        if let Err(error) = persist_key_variable(variable, &[]) {
-            // A preceding delete may already have changed live image policy.
-            // Always reconcile disposable boot caches before reporting failure.
-            force_refresh_key_databases();
-            return Err(error);
-        }
-    }
-
-    // An already-absent variable is an idempotent delete, but stale boot-only
-    // caches must still be discarded.
-    force_refresh_key_databases();
-    update_status_variables()?;
-    log::info!("All Secure Boot keys cleared - system in Setup Mode");
-    Ok(())
+    log::warn!("All Secure Boot keys cleared; resetting into Setup Mode");
+    crate::time::delay_ms(500);
+    crate::reset_system()
 }
 
 #[cfg(test)]

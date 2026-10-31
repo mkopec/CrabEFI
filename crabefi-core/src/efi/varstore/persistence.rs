@@ -1000,6 +1000,26 @@ pub fn is_varstore_freshly_formatted() -> bool {
     VARSTORE.get().formatted
 }
 
+/// Firmware-setup deletion of every active record of a variable, bypassing
+/// authentication (physical presence). Only the persistent store changes; the
+/// live runtime store keeps its contents until the next boot imports the
+/// store again, so callers must reset the platform afterwards.
+pub(crate) fn delete_firmware_variable(
+    guid: &r_efi::efi::Guid,
+    name: &[u16],
+) -> Result<(), VarStoreError> {
+    let name_len = name
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(name.len());
+    if name_len == 0 || name_len > crabefi_runtime_abi::MAX_VARIABLE_NAME_LEN {
+        return Err(VarStoreError::InvalidArgument);
+    }
+    let mut terminated_name = [0u16; crabefi_runtime_abi::MAX_VARIABLE_NAME_LEN + 1];
+    terminated_name[..name_len].copy_from_slice(&name[..name_len]);
+    write_variable_deletion_internal(guid, &terminated_name[..=name_len], 0, None)
+}
+
 /// Check if variable store is initialized.
 pub fn is_varstore_initialized() -> bool {
     VARSTORE.get().initialized

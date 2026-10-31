@@ -42,3 +42,8 @@ pub fn is_varstore_initialized() -> bool {
 pub fn is_varstore_freshly_formatted() -> bool {
     false
 }
+
+#[cfg(feature = "secure-boot")]
+pub(crate) fn delete_firmware_variable(_guid: &Guid, _name: &[u16]) -> Result<(), VarStoreError> {
+    Err(VarStoreError::NotInitialized)
+}
