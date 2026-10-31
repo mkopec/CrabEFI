@@ -64,6 +64,7 @@ pub struct Regulator {
 #[derive(Clone, Debug, Default)]
 pub struct Board {
     pub i2c: Vec<I2cBus>,
+    pub ufs: Option<u64>,
     /// SPI controller of the ChromeOS EC with the keyboard.
     pub ec_spi: Option<u64>,
     /// `linux,keymap` of the EC keyboard (`row << 24 | column << 16 | code`).
@@ -88,8 +89,9 @@ pub fn init(fdt: Option<&[u8]>) {
         }
     };
     log::info!(
-        "MT8196 board: {} I2C buses, EC SPI {:x?}",
+        "MT8196 board: {} I2C buses, UFS {:x?}, EC SPI {:x?}",
         board.i2c.len(),
+        board.ufs,
         board.ec_spi,
     );
     *BOARD.borrow_mut() = Some(board);
@@ -163,6 +165,8 @@ fn parse(dt: &fdt::Fdt<'_>) -> Board {
             if let Some(bus) = parse_i2c(dt, node, pio) {
                 board.i2c.push(bus);
             }
+        } else if compatible_with(node, "mediatek,mt8196-ufshci") {
+            board.ufs = regs64(node).first().map(|&(base, _)| base);
         } else if node.children().any(|child| {
             // The EC with the keyboard, not the fingerprint MCU (also cros-ec-spi).
             compatible_with(child, "google,cros-ec-spi")
