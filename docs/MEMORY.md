@@ -36,6 +36,14 @@ with it the heap and driver buffers, then prefers memory at or below the limit
 and uses the rest only when that is exhausted. RAM above the limit stays in
 the memory map for the OS.
 
+Drivers allocate memory that devices read or write directly (rings, contexts,
+descriptor tables, bounce buffers) with `efi::allocate_dma_pages`. Where DMA
+masters do not snoop the CPU caches, the platform maps one window of RAM
+non-cacheable and registers it with `efi::dma_pool::register`. Those
+allocations then come from the window, so drivers need no cache maintenance
+while the rest of RAM stays cacheable. Without a pool they come from ordinary
+memory below 4 GiB.
+
 ## Runtime image memory
 
 The checked normalized image covers one contiguous allocation with page-aligned
