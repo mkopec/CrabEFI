@@ -69,7 +69,8 @@ pub fn reset_system() -> ! {
 #[cfg(feature = "bundled-runtime-image")]
 pub use bundled_runtime::BUNDLED_RUNTIME_IMAGE;
 pub use crabefi_runtime_abi::{
-    RuntimeExternalRange, RuntimeResetConfig, RuntimeTimeConfig, reset_mechanism, time_mechanism,
+    RuntimeExternalRange, RuntimeNvramConfig, RuntimeResetConfig, RuntimeTimeConfig,
+    nvram_mechanism, reset_mechanism, time_mechanism,
 };
 pub use platform::{
     BlockDevice, BlockDeviceInfo, BlockError, BootResult, CapsuleBackend, CapsuleRegion,

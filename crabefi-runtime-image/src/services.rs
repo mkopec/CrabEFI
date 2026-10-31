@@ -14,6 +14,7 @@ use crabefi_runtime_abi::{
     bridge_operation, capsule,
 };
 
+use crate::nvram::{self, NvramConfig};
 use crate::{
     arch,
     deferred::{self, DeferredRegion},
@@ -400,6 +401,7 @@ fn write_variable(
     }
     let (runtime, variables) = lease.parts_mut();
     let bridge = runtime.boot_bridge;
+    let nvram = runtime.mapped_nvram();
     let deferred = runtime.deferred_region().map(|region| DeferredSink {
         transaction: &mut variables.deferred_transaction,
         region,
@@ -410,6 +412,7 @@ fn write_variable(
             transaction: &mut variables.transaction,
             phase,
             bridge,
+            nvram,
             deferred,
         },
         VariableRequest {
@@ -490,6 +493,8 @@ struct VariableContext<'a> {
     transaction: &'a mut VariableTransaction,
     phase: Phase,
     bridge: u64,
+    /// In-place runtime persistence, tried before the deferred journal.
+    nvram: Option<NvramConfig>,
     deferred: Option<DeferredSink<'a>>,
 }
 
@@ -505,6 +510,7 @@ impl<'a> VariableContext<'a> {
             transaction,
             phase: Phase::BootActive,
             bridge,
+            nvram: None,
             deferred: None,
         }
     }
@@ -527,6 +533,7 @@ fn apply_variable(
         transaction,
         phase,
         bridge,
+        nvram,
         mut deferred,
     } = context;
     validate_set_arguments(request.attributes, request.data.len())?;
@@ -577,7 +584,21 @@ fn apply_variable(
     {
         if phase.boot_services() {
             persist_through_bridge(bridge, &request, &prepared, staged, verified.timestamp)?;
-        } else {
+        } else if !nvram.is_some_and(|config| {
+            nvram::persist(
+                &config,
+                &nvram::Commit {
+                    guid: request.guid,
+                    name: request.name,
+                    attributes: prepared.attributes.bits(),
+                    data: staged,
+                    timestamp: verified.timestamp,
+                    delete: prepared.delete,
+                },
+            )
+            .is_ok()
+        }) {
+            // Full store or flash failure: the next boot compacts and replays.
             let sink = deferred.as_mut().ok_or(efi::Status::DEVICE_ERROR)?;
             queue_deferred(sink, &request, &prepared, staged, verified.timestamp)?;
         }
@@ -1202,6 +1223,7 @@ mod tests {
                     transaction: &mut self.transaction,
                     phase,
                     bridge: successful_bridge as *const () as u64,
+                    nvram: None,
                     deferred: Some(DeferredSink {
                         transaction: &mut self.deferred_transaction,
                         region: DeferredRegion::new(&mut self.buffer),

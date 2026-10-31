@@ -92,6 +92,44 @@ impl From<ResetMechanism> for u32 {
     }
 }
 
+pub mod nvram_mechanism {
+    /// Non-volatile writes after ExitBootServices go to the retained journal.
+    pub const NONE: u32 = 0;
+    /// MediaTek MT8196 SPI NOR controller (byte program, PIO read).
+    pub const MT8196_NOR: u32 = 1;
+}
+
+/// Parsed [`RuntimeNvramConfig::mechanism`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NvramMechanism {
+    None,
+    Mt8196Nor,
+}
+
+impl NvramMechanism {
+    /// Width of the MMIO window behind each of the config's MMIO bases.
+    pub const fn mmio_widths(self) -> [u64; 3] {
+        match self {
+            Self::None => [0; 3],
+            // SFLASH controller; topckgen CLK_CFG_14 set/clr + FENC status;
+            // pericfg_ao CG1 status/set/clr.
+            Self::Mt8196Nor => [0x100, 0x278, 0x34],
+        }
+    }
+}
+
+impl TryFrom<u32> for NvramMechanism {
+    type Error = HandoffError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            nvram_mechanism::NONE => Ok(Self::None),
+            nvram_mechanism::MT8196_NOR => Ok(Self::Mt8196Nor),
+            _ => Err(HandoffError::Mechanism),
+        }
+    }
+}
+
 pub mod configuration_policy {
     pub const PLATFORM_PHYSICAL: u32 = 1;
     pub const IMAGE_RUNTIME: u32 = 2;
@@ -175,6 +213,21 @@ pub struct RuntimeResetConfig {
     pub io_or_mmio_base: u64,
 }
 
+/// Flash region holding the EDK2 authenticated variable FV, written in place
+/// by runtime SetVariable. Every MMIO base must lie in an external range.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RuntimeNvramConfig {
+    pub mechanism: u32,
+    pub reserved: u32,
+    /// Controller register base, then mechanism-specific auxiliary bases
+    /// (for MT8196: topckgen and pericfg_ao, to ungate the flash clocks).
+    pub mmio_bases: [u64; 3],
+    /// Byte offset of the variable FV within the flash device.
+    pub region_offset: u32,
+    pub region_size: u32,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RuntimeHandoff {
@@ -193,6 +246,7 @@ pub struct RuntimeHandoff {
     pub deferred_buffer_size: u64,
     pub time: RuntimeTimeConfig,
     pub reset: RuntimeResetConfig,
+    pub nvram: RuntimeNvramConfig,
     pub sections: [LoadedSection; MAX_SECTIONS],
     pub ranges: [RuntimeExternalRange; MAX_EXTERNAL_RANGES],
 }
@@ -219,6 +273,13 @@ impl RuntimeHandoff {
                 mechanism: reset_mechanism::X86_LEGACY,
                 reserved: 0,
                 io_or_mmio_base: 0,
+            },
+            nvram: RuntimeNvramConfig {
+                mechanism: nvram_mechanism::NONE,
+                reserved: 0,
+                mmio_bases: [0; 3],
+                region_offset: 0,
+                region_size: 0,
             },
             sections: [LoadedSection {
                 physical_base: 0,
@@ -368,6 +429,39 @@ impl RuntimeHandoff {
             | (architecture::RISCV64, ResetMechanism::SbiSrst) => {}
             _ => return Err(HandoffError::Mechanism),
         }
+        let nvram = NvramMechanism::try_from(self.nvram.mechanism)?;
+        match (self.architecture, nvram) {
+            (_, NvramMechanism::None) | (architecture::AARCH64, NvramMechanism::Mt8196Nor) => {}
+            _ => return Err(HandoffError::Mechanism),
+        }
+        if nvram != NvramMechanism::None {
+            if self.nvram.region_size == 0
+                || self
+                    .nvram
+                    .region_offset
+                    .checked_add(self.nvram.region_size)
+                    .is_none()
+            {
+                return Err(HandoffError::Range);
+            }
+            for (&base, width) in self.nvram.mmio_bases.iter().zip(nvram.mmio_widths()) {
+                if width == 0 {
+                    continue;
+                }
+                let end = base.checked_add(width).ok_or(HandoffError::Overflow)?;
+                if base == 0
+                    || !ranges.iter().any(|range| {
+                        range.physical_base <= base
+                            && range
+                                .physical_base
+                                .checked_add(range.byte_len)
+                                .is_some_and(|range_end| end <= range_end)
+                    })
+                {
+                    return Err(HandoffError::Range);
+                }
+            }
+        }
         if let Some(width) = time.mmio_width() {
             let end = self
                 .time
@@ -502,7 +596,7 @@ const _: () = assert!(core::mem::size_of::<LoadedSection>() == 24);
 const _: () = assert!(core::mem::size_of::<RuntimeExternalRange>() == 24);
 const _: () = assert!(core::mem::size_of::<RuntimeTimeConfig>() == 16);
 const _: () = assert!(core::mem::size_of::<RuntimeResetConfig>() == 16);
-const _: () = assert!(core::mem::size_of::<RuntimeHandoff>() == 464);
+const _: () = assert!(core::mem::size_of::<RuntimeHandoff>() == 504);
 const _: () = assert!(core::mem::size_of::<RelocationImport>() == 24);
 const _: () = assert!(core::mem::size_of::<VariableTimestamp>() == 16);
 const _: () = assert!(core::mem::size_of::<VariableImport>() == 64);
