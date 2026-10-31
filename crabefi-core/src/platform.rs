@@ -523,6 +523,14 @@ pub trait PlatformHooks {
     fn show_firmware_settings(&self) -> bool {
         false
     }
+
+    /// Add firmware-owned nodes to a devicetree the OS boots with.
+    ///
+    /// Called for devicetrees supplied by OS loaders through
+    /// `EFI_DT_FIXUP_PROTOCOL` and for BLS `devicetree` entries, which replace
+    /// the platform's own devicetree. Fixups that change nothing leave the
+    /// blob untouched.
+    fn fixup_devicetree(&self, _tree: &mut crate::fdt_tree::Tree) {}
 }
 
 // ============================================================================

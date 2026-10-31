@@ -127,7 +127,7 @@ pub fn init_from_platform(config: &mut crate::platform::PlatformConfig) {
     }
 
     // Install standard protocols and finalize tables (shared with init)
-    install_standard_protocols_and_finalize();
+    install_standard_protocols_and_finalize(config.fdt.is_some());
 
     // Bind platform-described devices once the allocator, heap and timer are
     // up, and before measured boot, so a TPM peripheral can back it.
@@ -171,12 +171,15 @@ pub fn init_from_platform(config: &mut crate::platform::PlatformConfig) {
 /// Shared by both [`init()`] and [`init_from_platform()`] — contains the
 /// protocol installations and table finalization that are identical in both
 /// paths.
-fn install_standard_protocols_and_finalize() {
+fn install_standard_protocols_and_finalize(devicetree: bool) {
     init_hii();
     init_unicode_collation();
     init_memory_attribute();
     init_serial_io();
     init_rng();
+    if devicetree {
+        init_dt_fixup();
+    }
     init_console_control();
     init_device_path_protocols();
     #[cfg(target_arch = "riscv64")]
@@ -730,6 +733,28 @@ fn init_rng() {
     }
 
     log::debug!("RNG protocol installed on handle {:?}", handle);
+}
+
+/// Initialize the Devicetree Fixup protocol on devicetree platforms.
+fn init_dt_fixup() {
+    use protocols::dt_fixup::{DT_FIXUP_PROTOCOL_GUID, create_protocol};
+
+    let Some(handle) = boot_services::create_handle() else {
+        log::error!("Failed to create DT fixup handle");
+        return;
+    };
+    let protocol = create_protocol();
+    if protocol.is_null() {
+        return;
+    }
+    let status = boot_services::install_protocol(
+        handle,
+        &DT_FIXUP_PROTOCOL_GUID,
+        protocol as *mut core::ffi::c_void,
+    );
+    if status != Status::SUCCESS {
+        log::error!("Failed to install DT fixup protocol: {:?}", status);
+    }
 }
 
 /// Initialize Console Control protocol (legacy Intel EFI protocol)
