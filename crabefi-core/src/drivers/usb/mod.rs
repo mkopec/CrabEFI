@@ -146,13 +146,13 @@ static STOPPED: crate::cell::LocalCell<bool> = crate::cell::LocalCell::new(false
 /// * `controller` - The initialized controller to store
 /// * `wrap` - Closure to wrap the raw pointer into the appropriate `UsbControllerHandle` variant
 /// * `name` - Controller type name for logging
-/// * `address` - PCI address for logging
+/// * `address` - Bus address for logging
 fn store_controller<T>(
     controllers: &mut heapless::Vec<UsbControllerHandle, MAX_CONTROLLERS>,
     controller: T,
     wrap: fn(*mut T) -> UsbControllerHandle,
     name: &str,
-    address: pci::PciAddress,
+    address: &dyn core::fmt::Display,
 ) -> Result<(), ()> {
     let pages = mem::size_of::<T>().div_ceil(4096);
     let Some(alloc) = efi::allocate_pages(pages as u64) else {
@@ -297,6 +297,30 @@ async fn init_uhci(dev: &pci::PciDevice) -> Result<InitializedController, ()> {
 #[allow(clippy::result_unit_err)]
 pub fn register_controller(
     address: pci::PciAddress,
+    controller: InitializedController,
+) -> Result<(), ()> {
+    register_at(&address, controller)
+}
+
+/// Initialize and register a platform xHCI controller.
+///
+/// # Safety
+/// The requirements of [`XhciController::new_mmio`] must hold. No MediaTek
+/// clocks, PHYs, IOMMUs, or vendor scheduler registers are configured here.
+#[cfg(feature = "xhci")]
+#[allow(clippy::result_unit_err)]
+pub unsafe fn init_mmio_xhci(base: u64, domain: crate::efi::dma::DmaDomain) -> Result<(), ()> {
+    // SAFETY: forwarded from this function's caller.
+    let controller = crate::exec::block_on(unsafe { XhciController::new_mmio(base, domain) })
+        .map_err(|error| log::error!("xHCI MMIO at {base:#x}: {error:?}"))?;
+    register_at(
+        &format_args!("MMIO {base:#x}"),
+        InitializedController::Xhci(Box::new(controller)),
+    )
+}
+
+fn register_at(
+    address: &dyn core::fmt::Display,
     controller: InitializedController,
 ) -> Result<(), ()> {
     let mut controllers = ALL_CONTROLLERS.lock();

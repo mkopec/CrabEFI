@@ -5,7 +5,6 @@ use xhci::ring::trb::{command, event, transfer};
 
 use super::{TrbRing, XhciError};
 use crate::barrier;
-use crate::drivers::pci;
 use crate::efi;
 use crate::efi::dma::{DmaBuffer, DmaDirection, DmaMask};
 
@@ -109,7 +108,7 @@ impl super::XhciController {
                 .copy_from_slice(&bounce.as_slice()[poll.offset..poll.offset + transferred]);
             poll
         } else {
-            let domain = pci::dma_domain(self.pci_address).ok_or(XhciError::NotReady)?;
+            let domain = self.attachment.dma_domain().ok_or(XhciError::NotReady)?;
             let mask = if self
                 .registers
                 .capability
@@ -312,7 +311,7 @@ impl super::XhciController {
             data.as_ptr() as u64
         );
 
-        let domain = pci::dma_domain(self.pci_address).ok_or(XhciError::NotReady)?;
+        let domain = self.attachment.dma_domain().ok_or(XhciError::NotReady)?;
         let mask = if self
             .registers
             .capability
