@@ -124,9 +124,7 @@ fn mmio_dma_supported(domain: DmaDomain) -> bool {
 /// xHCI Controller
 pub struct XhciController {
     attachment: Attachment,
-    /// MMIO region (kept alive so the mapping is not dropped)
-    #[allow(dead_code)]
-    // Retained for the mapping lifetime; register I/O goes through `registers`.
+    /// Retained register window, also used for raw PORTSC reads.
     mmio: MmioRegion,
     /// xHCI register accessors.
     registers: Registers<IdentityMapper>,
