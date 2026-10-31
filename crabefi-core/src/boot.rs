@@ -216,6 +216,29 @@ pub fn try_boot_from_esp(
     storage: StorageId,
     block_size: u32,
 ) -> bool {
+    try_boot_file_from_esp(
+        esp,
+        partition_num,
+        path_info,
+        storage,
+        block_size,
+        crate::menu::EFI_BOOT_PATH,
+        &[],
+    )
+}
+
+/// Boot a specific EFI executable with UTF-16 load options.
+/// Used by the AArch64 BLS EFI-stub path as well as the removable-media path.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_boot_file_from_esp(
+    esp: &fs::gpt::Partition,
+    partition_num: u32,
+    path_info: &DevicePathInfo,
+    storage: StorageId,
+    block_size: u32,
+    boot_path: &str,
+    options: &[u16],
+) -> bool {
     // Mounting the SimpleFileSystem also validates the FAT filesystem.
     let sfs_protocol =
         simple_file_system::init_partition(storage, esp.first_lba, esp.size_sectors());
@@ -307,7 +330,6 @@ pub fn try_boot_from_esp(
 
     // Read the bootloader, then release the disk before executing it: the
     // loaded image reads through the same disk via the installed protocols.
-    let boot_path = crate::menu::EFI_BOOT_PATH;
     let image = match storage::with_disk(storage, |disk| {
         read_bootloader(disk, esp.first_lba, boot_path)
     }) {
@@ -319,7 +341,7 @@ pub fn try_boot_from_esp(
         }
     };
 
-    match execute_bootloader(image, boot_path, device_handle) {
+    match execute_bootloader(image, boot_path, device_handle, options) {
         Ok(()) => true,
         Err(e) => {
             log::error!("Failed to execute bootloader: {:?}", e);
@@ -370,6 +392,7 @@ fn execute_bootloader(
     image: BootloaderImage,
     path: &str,
     device_handle: r_efi::efi::Handle,
+    options: &[u16],
 ) -> Result<(), Status> {
     use core::ptr;
     use efi::allocator::free_pool;
@@ -420,18 +443,52 @@ fn execute_bootloader(
         log::info!("LoadedImage.DeviceHandle restored to {device_handle:?}");
     }
 
+    let mut options_buffer = core::ptr::null_mut();
+    if !options.is_empty() {
+        let size = core::mem::size_of_val(options);
+        if size > u32::MAX as usize || loaded_image.is_null() {
+            let _ = unsafe { (bs.unload_image)(image_handle) };
+            return Err(Status::INVALID_PARAMETER);
+        }
+        options_buffer =
+            match efi::allocator::allocate_pool(efi::allocator::MemoryType::LoaderData, size) {
+                Ok(buffer) => buffer,
+                Err(status) => {
+                    let _ = unsafe { (bs.unload_image)(image_handle) };
+                    return Err(status);
+                }
+            };
+        // SAFETY: the allocation covers size bytes. Retain it until the image
+        // is unloaded; if an image remains live on error, retain its options.
+        unsafe {
+            core::ptr::copy_nonoverlapping(options.as_ptr().cast::<u8>(), options_buffer, size);
+            efi::protocols::loaded_image::set_load_options(
+                loaded_image,
+                options_buffer.cast(),
+                size as u32,
+            );
+        }
+    }
+
     log::info!("Executing bootloader...");
     // No exit-data consumer at this level; StartImage frees any returned data.
     // SAFETY: image_handle came from a successful LoadImage; no exit data is requested.
     let status = unsafe { (bs.start_image)(image_handle, ptr::null_mut(), ptr::null_mut()) };
     log::info!("Bootloader returned with status: {:?}", status);
+    // StartImage may fail before invoking the application; explicitly unload
+    // any surviving handle before releasing its load options.
+    if !boot_services::get_protocol_on_handle(image_handle, &LOADED_IMAGE_PROTOCOL_GUID).is_null() {
+        let _ = unsafe { (bs.unload_image)(image_handle) };
+    }
+    if !options_buffer.is_null()
+        && boot_services::get_protocol_on_handle(image_handle, &LOADED_IMAGE_PROTOCOL_GUID)
+            .is_null()
+    {
+        let _ = free_pool(options_buffer);
+    }
     if status == Status::SUCCESS {
         Ok(())
     } else {
-        // StartImage can also fail before invoking the application. If it did
-        // run, its automatic teardown already removed the handle.
-        // SAFETY: image_handle is the loaded image from this invocation.
-        let _ = unsafe { (bs.unload_image)(image_handle) };
         Err(status)
     }
 }
