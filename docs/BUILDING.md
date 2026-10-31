@@ -128,6 +128,7 @@ map, symbols, disassembly, stack report, digest, and JSON audits are under
 | `ui` | off | Graphical UI, mouse cursor and EFI Simple Pointer |
 | `elan-i2c` | off | Native ELAN I2C touchpad driver for platform-described peripherals (implies `ui`) |
 | `hid-i2c` | off | HID-over-I2C touchpads, mice and keyboards for platform-described peripherals (implies `ui`) |
+| `cros-ec` | off | Chrome EC host commands over a platform-supplied SPI transport, and the EC's MKBP keyboard |
 
 The `crabefi-coreboot` binary enables both `platform-entry` and `global-allocator` automatically. External firmware that provides its own entry point and allocator should not enable these features.
 
