@@ -276,7 +276,7 @@ impl super::XhciController {
         // (many mice stall GET_REPORT so we must use the interrupt pipe).
         let in_dci = (interrupt_in as usize * 2) + 1; // Interrupt IN → odd DCI
 
-        let ring_mem = efi::allocate_pages(1).ok_or(XhciError::AllocationFailed)?;
+        let ring_mem = efi::allocate_dma_pages(1).ok_or(XhciError::AllocationFailed)?;
         let ring_addr = ring_mem.as_ptr() as u64;
         let ring = TrbRing::new(ring_addr, 256);
         let context_size = self.context_size;
