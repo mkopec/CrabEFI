@@ -32,6 +32,9 @@ mod arch_entry;
 #[path = "arch/x86_64/entry.rs"]
 mod arch_entry;
 #[cfg(target_arch = "aarch64")]
+#[path = "arch/aarch64/fit.rs"]
+mod arch_fit;
+#[cfg(target_arch = "aarch64")]
 #[path = "arch/aarch64/mmu.rs"]
 mod arch_mmu;
 mod cbmem_console;
@@ -836,7 +839,17 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
     // ================================================================
     // SAFETY: The parser first tries the payload entry argument and falls back
     // to scanning the standard coreboot table locations if it is not valid.
-    let cb_info = unsafe { tables::parse(coreboot_table_ptr as *const u8) };
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: the unmodified payload entry argument.
+    let fit = unsafe { arch_fit::handoff(coreboot_table_ptr) };
+    #[cfg(target_arch = "aarch64")]
+    let coreboot_table_ptr = fit.coreboot_table;
+    #[allow(unused_mut)]
+    let mut cb_info = unsafe { tables::parse(coreboot_table_ptr as *const u8) };
+    #[cfg(target_arch = "aarch64")]
+    if let Some(fdt) = fit.fdt {
+        cb_info.devicetree = Some((fdt.as_ptr() as u64, fdt.len() as u32));
+    }
 
     // ================================================================
     // Phase 2: Store coreboot-specific info in global state

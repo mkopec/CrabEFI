@@ -72,5 +72,10 @@ SECTIONS {
         _deferred_buffer_end = .;
     } :defer
 
+    /* Image header fields (FIT boot): coreboot places the image at a
+     * 2MB-aligned RAM base plus text_offset, i.e. at PAYLOAD_BASE. */
+    _image_text_offset = PAYLOAD_BASE & 0x3fffffff;
+    _image_size = _deferred_buffer_end - _start;
+
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) *(.debug*) *(.ARM.exidx*) *(.ARM.extab*) }
 }
