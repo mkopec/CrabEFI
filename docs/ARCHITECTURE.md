@@ -5,15 +5,19 @@
 - `crabefi-core`: boot-time UEFI implementation and hardware drivers
 - `crabefi-coreboot`: coreboot payload and platform discovery
 - `crabefi-efi-types`: shared, allocation-free EFI time, signature-list, and Secure Boot definitions
+- `crabefi-hw`: register-level controller drivers shared by platform code and the runtime image's flash mechanisms
 - `crabefi-runtime-abi`: excluded, host-testable pointer-free format/handoff ABI
 - `crabefi-runtime-image`: excluded, separately linked `no_std` Runtime Services image
 - `xtask`: host build, normalization, audit, ROM, and QEMU automation
 
 The runtime image shares pointer-free handoff definitions through
 `crabefi-runtime-abi` and EFI authentication definitions through
-`crabefi-efi-types`. It has no dependency on `crabefi-core`, `log`, drivers, or
-platform traits. Cryptographic operations use only fixed stack buffers,
-not an unbounded or post-seal general-purpose heap.
+`crabefi-efi-types`. It has no dependency on `crabefi-core`, `log`, boot
+drivers, or platform traits. Its only hardware code is the flash controller
+drivers from `crabefi-hw` behind value-only NVRAM mechanisms (see
+[capabilities](capabilities.md#runtime-nvram-mechanisms)). Cryptographic
+operations use only fixed stack buffers, not an unbounded or post-seal
+general-purpose heap.
 
 ## Boot flow
 

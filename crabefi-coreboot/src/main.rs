@@ -159,6 +159,7 @@ fn runtime_platform_config() -> crabefi::RuntimePlatformConfig<'static> {
         time,
         reset,
         external_ranges: &[],
+        nvram: crabefi::RuntimeNvramConfig::default(),
         deferred_buffer,
     }
 }

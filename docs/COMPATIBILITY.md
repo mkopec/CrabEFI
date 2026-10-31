@@ -54,8 +54,10 @@ feature.
 - Power-loss-safe variable-store compaction
 
 Runtime NV writes through the deferred buffer are warm-reset staging, not a
-power-loss durability guarantee. See [capabilities](capabilities.md) for the
-variable-store and runtime-image contracts.
+power-loss durability guarantee. Platforms with a runtime NVRAM mechanism
+(MT8196) write them to flash instead and fall back to the buffer. See
+[capabilities](capabilities.md) for the variable-store and runtime-image
+contracts.
 
 ## Hardware qualification
 
