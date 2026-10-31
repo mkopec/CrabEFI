@@ -59,6 +59,13 @@ fn fixed_up(tree: &Tree) -> Option<Vec<u8>> {
     (fixed != *tree).then(|| fixed.to_bytes())
 }
 
+/// Apply the platform fixups to a devicetree the firmware itself installs
+/// (BLS `devicetree` entries, booted by `efi_linux`).
+#[cfg(any(target_arch = "aarch64", test))]
+pub(crate) fn apply_platform_fixups(blob: &[u8]) -> Option<Vec<u8>> {
+    fixed_up(&Tree::parse(blob)?)
+}
+
 fn reserve(address: u64, size: u64, no_map: bool) {
     let start = address & !0xfff;
     let Some(end) = address
@@ -300,6 +307,11 @@ mod tests {
             tree.node("/fixed")
                 .and_then(|node| node.property("compatible")),
             Some(&b"crabefi,test\0"[..])
+        );
+        assert_eq!(
+            apply_platform_fixups(&buffer),
+            None,
+            "fixups are idempotent"
         );
     }
 
