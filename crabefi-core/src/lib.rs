@@ -28,6 +28,7 @@ pub mod exec;
 #[cfg(feature = "fb-log")]
 pub mod fb_log;
 pub mod fdt;
+pub mod fdt_tree;
 pub mod framebuffer_console;
 pub mod fs;
 pub mod grub;
