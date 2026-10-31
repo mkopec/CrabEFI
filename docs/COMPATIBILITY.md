@@ -64,3 +64,5 @@ contracts.
 QEMU coverage does not establish physical-board support. Board-specific reset,
 RTC, SPI flash geometry/protection, interrupt wiring, retained MMIO, and
 memory-map behavior still require hardware validation before deployment.
+MediaTek MT8196 has been tested on one board (Google Navi); see
+[MT8196.md](MT8196.md).

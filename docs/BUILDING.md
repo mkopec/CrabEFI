@@ -51,6 +51,10 @@ The `./crabefi` wrapper invokes the xtask build system:
 
 # Build for aarch64 (QEMU virt)
 ./crabefi build --arch aarch64 --machine virt
+
+# Build for MediaTek MT8196 Chromebooks (see MT8196.md)
+LOW_DEVICE_GB=2 ./crabefi build --arch aarch64 --machine mt8196 --ui \
+    --fit-dtb path/to/board.dtb
 ```
 
 The output ELF is at `target/<triple>/release/crabefi`.
