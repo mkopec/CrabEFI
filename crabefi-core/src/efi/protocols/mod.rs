@@ -11,6 +11,7 @@ pub mod device_path_from_text;
 pub mod device_path_to_text;
 pub mod device_path_utilities;
 pub mod disk_io;
+pub mod dt_fixup;
 pub mod graphics_output;
 pub mod hii;
 mod instance;
