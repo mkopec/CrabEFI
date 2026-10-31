@@ -16,7 +16,19 @@ global_asm!(
 
 .global _start
 _start:
-    // x0 = coreboot table pointer (passed by coreboot)
+    // Linux arm64 Image header (Documentation/arch/arm64/booting.rst), so
+    // coreboot can also start CrabEFI from a FIT, passing a devicetree.
+    b .Lentry                   // code0
+    .long 0                     // code1
+    .quad _image_text_offset    // text_offset from a 2MB-aligned RAM base
+    .quad _image_size           // effective image size, including BSS
+    .quad 0xa                   // flags: LE, 4K pages, place anywhere
+    .quad 0, 0, 0               // res2-4
+    .ascii "ARM\x64"            // magic
+    .long 0                     // res5
+
+.Lentry:
+    // x0 = coreboot table pointer (ELF payload) or devicetree (FIT payload).
     // Save it in a callee-saved register
     mov x19, x0
     // coreboot/TF-A may enter in EL2t (SPSR=0x8). Select SP_EL2 so an
