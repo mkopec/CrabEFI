@@ -914,6 +914,9 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
     } else if let Some(boot_media) = cb_info.boot_media
         && let Ok(flash_size) = u32::try_from(boot_media.boot_media_size)
         && let Some(host_base) = 0x1_0000_0000u64.checked_sub(boot_media.boot_media_size)
+        // The flash is assumed to end at 4GB as on x86. Where RAM is there
+        // (MediaTek SoCs), it is not flash.
+        && !memory::overlaps_ram(&cb_info.memory_map, host_base, boot_media.boot_media_size)
     {
         crabefi::drivers::spi::qemu::configure_pflash(host_base, flash_size);
     }
