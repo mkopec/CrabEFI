@@ -24,6 +24,8 @@ pub mod cell;
 pub mod cursor;
 pub mod drivers;
 pub mod efi;
+#[cfg(any(target_arch = "aarch64", test))]
+mod efi_linux;
 pub mod exec;
 #[cfg(feature = "fb-log")]
 pub mod fb_log;

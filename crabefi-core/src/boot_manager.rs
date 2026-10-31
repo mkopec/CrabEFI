@@ -344,6 +344,7 @@ fn boot_selected_entry(entry: &menu::BootEntry) {
             linux_path,
             initrd_paths,
             cmdline,
+            ..
         }
         | menu::BootEntryKind::GrubLinux {
             linux_path,
@@ -355,7 +356,21 @@ fn boot_selected_entry(entry: &menu::BootEntry) {
                 log::info!("Dispatching to direct Linux boot");
                 boot_linux_entry(entry, linux_path, initrd_paths, cmdline);
             }
-            #[cfg(not(target_arch = "x86_64"))]
+            #[cfg(target_arch = "aarch64")]
+            {
+                let dtb = match &entry.kind {
+                    menu::BootEntryKind::BlsLinux {
+                        devicetree_path, ..
+                    } if !devicetree_path.is_empty() => Some(devicetree_path.as_str()),
+                    _ => None,
+                };
+                if let Err(status) =
+                    crate::efi_linux::boot_entry(entry, linux_path, initrd_paths, cmdline, dtb)
+                {
+                    log::error!("Linux EFI-stub boot failed: {status:?}");
+                }
+            }
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             {
                 let _ = (linux_path, initrd_paths, cmdline);
                 log::warn!("Direct Linux boot not supported on this architecture");
