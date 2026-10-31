@@ -42,6 +42,9 @@ pub fn prepare_rom(
         (Arch::X86_64, _) => prepare_rom_x86_64(crabefi_elf, output_dir),
         (Arch::Aarch64, Machine::Sbsa) => prepare_rom_aarch64_sbsa(crabefi_elf, output_dir),
         (Arch::Aarch64, Machine::Virt) => prepare_rom_aarch64_virt(crabefi_elf, output_dir),
+        (Arch::Aarch64, Machine::Mt8196) => {
+            bail!("mt8196 ROMs are built with coreboot, not by xtask")
+        }
         (Arch::Riscv64, _) => prepare_rom_riscv64(crabefi_elf, output_dir),
     }
 }

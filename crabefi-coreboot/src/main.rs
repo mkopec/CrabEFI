@@ -51,13 +51,18 @@ mod memory;
 mod memory_map;
 #[cfg(feature = "external-runtime-image")]
 mod runtime_blob;
+#[cfg(all(target_arch = "aarch64", feature = "mt8196"))]
+mod soc;
 mod tables;
 #[cfg(target_arch = "x86_64")]
 mod timestamps;
 
 use core::panic::PanicInfo;
+
 #[cfg(target_arch = "riscv64")]
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+#[cfg(all(target_arch = "aarch64", feature = "mt8196"))]
+use soc::mediatek::mt8196;
 
 // ============================================================================
 // Memory map size limit
@@ -218,6 +223,11 @@ static COREBOOT_FDT: crabefi::cell::LocalCell<Option<&'static [u8]>> =
 struct CorebootHooks;
 
 impl crabefi::PlatformHooks for CorebootHooks {
+    fn init_devices(&self) {
+        #[cfg(all(target_arch = "aarch64", feature = "mt8196"))]
+        mt8196::init_devices();
+    }
+
     fn on_exit_boot_services(&self) {
         // Invalidate the coreboot framebuffer record to prevent a race between
         // Linux simplefb (coreboot) and efifb (EFI GOP).
@@ -1210,6 +1220,8 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
     // call is a no-op.
     // ================================================================
     crabefi::efi::allocator::init_from_platform(config.memory_map);
+    #[cfg(all(target_arch = "aarch64", feature = "mt8196"))]
+    mt8196::init_memory();
     // Devices that do not snoop the CPU caches get non-cacheable buffers.
     #[cfg(target_arch = "aarch64")]
     if coreboot_devicetree(&cb_info).is_some_and(|fdt| !devicetree::any_dma_coherent(fdt)) {

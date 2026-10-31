@@ -271,6 +271,7 @@ fn build_qemu_command(config: &QemuConfig, disk_path: &Path) -> Result<Command> 
         (Arch::X86_64, _) => build_qemu_command_x86_64(config, disk_path),
         (Arch::Aarch64, Machine::Sbsa) => build_qemu_command_aarch64_sbsa(config, disk_path),
         (Arch::Aarch64, Machine::Virt) => build_qemu_command_aarch64_virt(config, disk_path),
+        (Arch::Aarch64, Machine::Mt8196) => bail!("mt8196 is hardware only, not a QEMU machine"),
         (Arch::Riscv64, _) => build_qemu_command_riscv64(config, disk_path),
     }
 }
@@ -1641,6 +1642,7 @@ fn run_qemu_with_capture(config: &QemuConfig, disk_path: &Path) -> Result<TestRe
         (Arch::Aarch64, Machine::Virt) => {
             run_qemu_with_capture_aarch64_virt(config, disk_path, timeout)
         }
+        (Arch::Aarch64, Machine::Mt8196) => bail!("mt8196 is hardware only, not a QEMU machine"),
         (Arch::Riscv64, _) => run_qemu_with_capture_riscv64(config, disk_path, timeout),
     }
 }
