@@ -61,7 +61,12 @@ struct SlotPages([u64; 3]);
 impl Drop for SlotPages {
     fn drop(&mut self) {
         for address in self.0.into_iter().filter(|address| *address != 0) {
-            let _ = efi::allocator::free_pages(address, 1);
+            // SAFETY: the page was allocated by allocate_dma_pages and never
+            // published to hardware.
+            efi::free_dma_pages(
+                unsafe { core::slice::from_raw_parts_mut(address as *mut u8, 4096) },
+                1,
+            );
         }
     }
 }
@@ -336,7 +341,7 @@ impl super::XhciController {
             };
         let mut pages = SlotPages::default();
         for address in &mut pages.0 {
-            let memory = efi::allocate_pages(1).ok_or(XhciError::AllocationFailed)?;
+            let memory = efi::allocate_dma_pages(1).ok_or(XhciError::AllocationFailed)?;
             memory.fill(0);
             *address = memory.as_ptr() as u64;
         }
