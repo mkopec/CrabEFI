@@ -1,7 +1,7 @@
 //! xHCI controller init and port power.
 
 use super::speed::{LinkSpeed, Usb3Protocol};
-use super::{IdentityMapper, MAX_SLOTS, TrbRing, XHCI_MMIO_SIZE, XhciError};
+use super::{Attachment, IdentityMapper, MAX_SLOTS, TrbRing, XHCI_MMIO_SIZE, XhciError};
 use crate::barrier;
 use crate::drivers::mmio::MmioRegion;
 use crate::drivers::pci::{self, PciDevice};
@@ -132,17 +132,43 @@ impl super::XhciController {
     /// Create a new xHCI controller from a PCI device
     pub async fn new(pci_dev: &PciDevice) -> Result<Self, XhciError> {
         let mmio_base = pci_dev.mmio_base().ok_or(XhciError::NotReady)?;
-        // SAFETY: mmio_base is a PCI BAR address for this xHCI controller,
-        // mapped by the platform and valid for the device's lifetime.
+        // Enable the device (bus master + memory space).
+        pci::enable_device(pci_dev);
+        Self::new_at(mmio_base, Attachment::Pci(pci_dev.address)).await
+    }
+
+    /// Initialize a platform xHCI controller without PCI configuration space.
+    ///
+    /// Non-coherent or translated DMA is not yet supported for MMIO controllers:
+    /// rings and contexts still use CPU physical addresses directly.
+    ///
+    /// # Safety
+    /// The caller must provide a powered, clocked, host-mode controller with
+    /// at least 64 KiB of Device-mapped registers at `mmio_base`, valid for the
+    /// firmware lifetime. All memory returned by the EFI page allocator must
+    /// be reachable by this controller through `domain`, including rings and
+    /// contexts. Any IOMMU must already provide that mapping. The platform must
+    /// also perform any vendor-specific setup required before enumeration.
+    pub async unsafe fn new_mmio(
+        mmio_base: u64,
+        domain: crate::efi::dma::DmaDomain,
+    ) -> Result<Self, XhciError> {
+        // Reject unsupported domains before accessing any controller registers.
+        if !super::mmio_dma_supported(domain) {
+            return Err(XhciError::InvalidParameter);
+        }
+        Self::new_at(mmio_base, Attachment::Mmio(domain)).await
+    }
+
+    async fn new_at(mmio_base: u64, attachment: Attachment) -> Result<Self, XhciError> {
+        // SAFETY: the PCI caller supplies a mapped BAR; the MMIO caller
+        // guarantees a mapped, accessible controller for the firmware lifetime.
         let mmio = unsafe {
             MmioRegion::try_new(mmio_base, XHCI_MMIO_SIZE).map_err(|e| {
                 log::error!("xHCI MMIO region invalid at {mmio_base:#x}: {e}");
                 XhciError::InvalidParameter
             })?
         };
-
-        // Enable the device (bus master + memory space)
-        pci::enable_device(pci_dev);
 
         let registers = unsafe {
             Registers::new_with_64bit_access(mmio_base as usize, IdentityMapper, Access64::LowHigh)
@@ -187,7 +213,7 @@ impl super::XhciController {
         }
 
         let mut controller = Self {
-            pci_address: pci_dev.address,
+            attachment,
             mmio,
             registers,
             num_ports,
