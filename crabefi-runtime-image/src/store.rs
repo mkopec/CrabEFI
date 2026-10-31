@@ -415,16 +415,26 @@ impl VariableStore {
             return Ok(());
         }
 
+        // Pack the surviving payloads to the front of the arena in ascending
+        // data-offset order. Slot order is unrelated to arena order (every
+        // write lands at the end), and only offset order guarantees that each
+        // move goes downwards over data that has already been moved.
         let mut used = 0usize;
-        for (index, slot) in self.slots.iter_mut().enumerate() {
-            if index == prepared.slot || slot.in_use == 0 {
-                continue;
-            }
-            let old = slot.data_offset as usize;
-            let len = usize::from(slot.data_len);
+        let mut previous: Option<(usize, usize)> = None;
+        while let Some((old, index)) = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(index, slot)| *index != prepared.slot && slot.in_use != 0)
+            .map(|(index, slot)| (slot.data_offset as usize, index))
+            .filter(|key| previous.is_none_or(|previous| *key > previous))
+            .min()
+        {
+            previous = Some((old, index));
+            let len = usize::from(self.slots.get(index).ok_or(Status::DEVICE_ERROR)?.data_len);
             let old_end = old.checked_add(len).ok_or(Status::DEVICE_ERROR)?;
             let new_end = used.checked_add(len).ok_or(Status::DEVICE_ERROR)?;
-            if old_end > self.arena.len() || new_end > self.arena.len() {
+            if old_end > self.arena.len() || new_end > self.arena.len() || used > old {
                 return Err(Status::DEVICE_ERROR);
             }
             if old != used {
@@ -437,7 +447,10 @@ impl VariableStore {
                         len,
                     );
                 }
-                slot.data_offset = used as u32;
+                self.slots
+                    .get_mut(index)
+                    .ok_or(Status::DEVICE_ERROR)?
+                    .data_offset = used as u32;
             }
             used = new_end;
         }
@@ -501,5 +514,72 @@ impl VariableStore {
                 .map(|(_, variable)| usize::from(variable.data_len))
                 .sum(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{VariableStore, VariableTransaction};
+    use crate::efi::VariableAttributes;
+    use std::boxed::Box;
+    use std::vec::Vec;
+
+    const GUID: [u8; 16] = [0x11; 16];
+
+    fn name(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+
+    fn set(
+        store: &mut VariableStore,
+        transaction: &mut VariableTransaction,
+        var: &str,
+        data: &[u8],
+    ) {
+        let attributes = VariableAttributes::NON_VOLATILE | VariableAttributes::BOOTSERVICE_ACCESS;
+        let var = name(var);
+        let mut prepared = store.prepare(GUID, &var, attributes, data.len()).unwrap();
+        store
+            .stage(transaction, &mut prepared, data, false)
+            .unwrap();
+        store.commit(transaction, prepared, &var).unwrap();
+    }
+
+    fn get<'a>(store: &'a VariableStore, var: &str) -> &'a [u8] {
+        let slot = store.find(&GUID, &name(var), false).unwrap();
+        store.data(slot).unwrap()
+    }
+
+    #[test]
+    fn replacing_variables_keeps_every_other_payload_intact() {
+        let mut store = Box::new(VariableStore::new());
+        let mut transaction = Box::new(VariableTransaction::new());
+        set(&mut store, &mut transaction, "A", &[0xa0; 3000]);
+        set(&mut store, &mut transaction, "B", &[0xb0; 1500]);
+        set(&mut store, &mut transaction, "C", &[0xc0; 700]);
+        // Each replacement moves the value to the end of the arena, so slot
+        // order and arena order diverge (the Secure Boot db-then-KEK update).
+        set(&mut store, &mut transaction, "A", &[0xa1; 849]);
+        set(&mut store, &mut transaction, "B", &[0xb1; 851]);
+        set(&mut store, &mut transaction, "C", &[0xc1; 20]);
+        set(&mut store, &mut transaction, "A", &[0xa2; 100]);
+        assert_eq!(get(&store, "A"), &[0xa2; 100][..]);
+        assert_eq!(get(&store, "B"), &[0xb1; 851][..]);
+        assert_eq!(get(&store, "C"), &[0xc1; 20][..]);
+    }
+
+    #[test]
+    fn compaction_never_overwrites_a_payload_before_moving_it() {
+        let mut store = Box::new(VariableStore::new());
+        let mut transaction = Box::new(VariableTransaction::new());
+        set(&mut store, &mut transaction, "KEK", &[0x01; 100]);
+        set(&mut store, &mut transaction, "db", &[0x02; 1000]);
+        set(&mut store, &mut transaction, "PK", &[0x03; 10]);
+        // KEK (lowest slot) now lies at the end of the arena, behind db.
+        set(&mut store, &mut transaction, "KEK", &[0x04; 851]);
+        set(&mut store, &mut transaction, "PK", &[0x05; 849]);
+        assert_eq!(get(&store, "KEK"), &[0x04; 851][..]);
+        assert_eq!(get(&store, "db"), &[0x02; 1000][..]);
+        assert_eq!(get(&store, "PK"), &[0x05; 849][..]);
     }
 }
