@@ -131,6 +131,10 @@ impl super::XhciController {
     ///
     /// Uses the shared parse_configuration() infrastructure from controller.rs
     pub(super) fn configure_hid_keyboard(&mut self, slot_id: u8) -> Result<(), XhciError> {
+        if matches!(self.attachment, super::Attachment::MmioBulkOnly(_)) {
+            log::info!("USB: skipping keyboard until platform periodic scheduling is supported");
+            return Err(XhciError::NotReady);
+        }
         let config_info = self.get_config_descriptor(slot_id)?;
 
         // Find HID keyboard interface
@@ -203,6 +207,9 @@ impl super::XhciController {
     ///
     /// Configure the interrupt pipe, shared with HID keyboards.
     pub(super) fn configure_hid_mouse(&mut self, slot_id: u8) -> Result<(), XhciError> {
+        if matches!(self.attachment, super::Attachment::MmioBulkOnly(_)) {
+            return Err(XhciError::NotReady);
+        }
         let config_info = self.get_config_descriptor(slot_id)?;
 
         let mut interrupt_in = 0u8;
