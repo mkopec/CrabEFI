@@ -11,7 +11,7 @@ default = ["bundled-runtime-image"]
 bundled-runtime-image = ["crabefi/bundled-runtime-image"]
 external-runtime-image = []
 # MediaTek MT8196 SoC drivers for the board devices in the devicetree.
-mt8196 = []
+mt8196 = ["crabefi/cros-ec"]
 # Use the long-mode RDI entry for u-root/LinuxBoot instead of coreboot's
 # default 32-bit stack-argument entry. Only supported on x86-64.
 entry64 = []

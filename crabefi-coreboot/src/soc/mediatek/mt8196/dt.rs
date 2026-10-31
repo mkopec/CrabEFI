@@ -64,6 +64,10 @@ pub struct Regulator {
 #[derive(Clone, Debug, Default)]
 pub struct Board {
     pub i2c: Vec<I2cBus>,
+    /// SPI controller of the ChromeOS EC with the keyboard.
+    pub ec_spi: Option<u64>,
+    /// `linux,keymap` of the EC keyboard (`row << 24 | column << 16 | code`).
+    pub ec_keymap: Vec<u32>,
     /// MT6373 always-on regulators.
     pub mt6373_always_on: Vec<Regulator>,
 }
@@ -83,7 +87,11 @@ pub fn init(fdt: Option<&[u8]>) {
             Board::default()
         }
     };
-    log::info!("MT8196 board: {} I2C buses", board.i2c.len());
+    log::info!(
+        "MT8196 board: {} I2C buses, EC SPI {:x?}",
+        board.i2c.len(),
+        board.ec_spi,
+    );
     *BOARD.borrow_mut() = Some(board);
 }
 
@@ -155,6 +163,20 @@ fn parse(dt: &fdt::Fdt<'_>) -> Board {
             if let Some(bus) = parse_i2c(dt, node, pio) {
                 board.i2c.push(bus);
             }
+        } else if node.children().any(|child| {
+            // The EC with the keyboard, not the fingerprint MCU (also cros-ec-spi).
+            compatible_with(child, "google,cros-ec-spi")
+                && child
+                    .children()
+                    .any(|grandchild| compatible_with(grandchild, "google,cros-ec-keyb"))
+        }) {
+            board.ec_spi = regs64(node).first().map(|&(base, _)| base);
+            board.ec_keymap = node
+                .children()
+                .flat_map(|ec| ec.children())
+                .find(|child| compatible_with(*child, "google,cros-ec-keyb"))
+                .map(|keyboard| cells(keyboard, "linux,keymap"))
+                .unwrap_or_default();
         } else if compatible_with(node, "mediatek,mt6373-regulator") {
             board.mt6373_always_on = node
                 .children()
