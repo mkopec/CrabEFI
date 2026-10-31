@@ -13,13 +13,15 @@ mod ec;
 mod gpio;
 #[cfg(target_arch = "aarch64")]
 mod i2c;
+#[cfg(target_arch = "aarch64")]
+mod ufs;
 
 #[cfg(target_arch = "aarch64")]
 pub use self::platform::*;
 
 #[cfg(target_arch = "aarch64")]
 mod platform {
-    use super::{dt, ec, i2c};
+    use super::{dt, ec, i2c, ufs};
     use crate::tables::CorebootInfo;
 
     /// The DMA masters (xHCI, UFS, I2C APDMA) only reach the low 4 GiB:
@@ -44,5 +46,6 @@ mod platform {
     /// Bring up the boot devices (PlatformHooks::init_devices).
     pub fn init_devices() {
         ec::init();
+        ufs::init();
     }
 }
