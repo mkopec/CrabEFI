@@ -119,6 +119,10 @@ pub fn load(
         u64::try_from(platform.deferred_buffer.size).map_err(|_| LoadError::InvalidLayout)?;
     handoff.time = platform.time;
     handoff.reset = platform.reset;
+    for range in platform.external_ranges {
+        allocator::add_runtime_mmio(range.physical_base, range.byte_len / PAGE_SIZE)
+            .map_err(|_| LoadError::InvalidLayout)?;
+    }
     (0..usize::from(header.section_count)).try_for_each(|index| {
         let section = image.section(index).map_err(LoadError::InvalidFormat)?;
         handoff.sections[index] = LoadedSection {
