@@ -13,6 +13,14 @@ fn board() -> Board {
 }
 
 #[test]
+fn controllers_come_from_the_devicetree() {
+    let board = board();
+    // The EC with the keyboard, not the fingerprint EC on spi@16120000.
+    assert_eq!(board.ec_spi, Some(0x1613_0000));
+    assert_eq!(board.ec_keymap, [0x0001_007d, 0x0102_001e, 0x0300_002a]);
+}
+
+#[test]
 fn i2c_buses_skip_disabled_nodes_and_keep_device_wiring() {
     let board = board();
     let buses: Vec<_> = board

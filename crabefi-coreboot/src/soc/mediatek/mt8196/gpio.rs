@@ -5,8 +5,10 @@
 
 const GPIO: u64 = 0x1002_d000;
 const DIR: u64 = 0x000;
+const DOUT: u64 = 0x100;
 const DIN: u64 = 0x200;
 const MODE: u64 = 0x300;
+const SET: u64 = 0x4;
 const RST: u64 = 0x8;
 
 fn bank(base: u64, pin: u32) -> (u64, u32) {
@@ -40,6 +42,23 @@ pub fn make_input(pin: u32) {
     set_mode(pin, 0);
     let (dir, bit) = bank(DIR, pin);
     write(dir + RST, bit);
+}
+
+/// The pin is a GPIO (mode 0) driven as an output, as coreboot leaves the
+/// pins it hands to the payload.
+pub fn is_gpio_output(pin: u32) -> bool {
+    let (dir, bit) = bank(DIR, pin);
+    let (address, shift) = mode(pin);
+    read(dir) & bit != 0 && (read(address) >> shift) & 0xf == 0
+}
+
+/// Drive an output through the atomic set/reset registers.
+pub fn set_output(pin: u32, high: bool) {
+    let (dout, bit) = bank(DOUT, pin);
+    write(dout + if high { SET } else { RST }, bit);
+    // SAFETY: a barrier instruction only; completes the write before callers
+    // start timing the signal.
+    unsafe { core::arch::asm!("dsb sy", options(nostack, preserves_flags)) };
 }
 
 /// Level on the pad.
