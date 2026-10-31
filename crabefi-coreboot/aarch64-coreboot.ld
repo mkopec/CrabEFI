@@ -54,6 +54,8 @@ SECTIONS {
         . += 4096;
         _el2_l1_table = .;
         . += 4096 * 4;
+        _el2_l2_table = .;
+        . += 4096;
     } :data
     .exc_stack (NOLOAD) : ALIGN(4096) {
         _exc_stack_bottom = .;

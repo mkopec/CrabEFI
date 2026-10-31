@@ -870,6 +870,12 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
         framebuffer::store_framebuffer_record_addr(addr);
     }
 
+    // The display engine scans the framebuffer out of DRAM without snooping
+    // the caches: map it non-cacheable before drawing to it.
+    #[cfg(target_arch = "aarch64")]
+    let framebuffer_uncached =
+        validated_framebuffer.map(|fb| arch_mmu::map_uncached(fb.physical_address, fb.size()));
+
     if let Some(ref spi_flash) = cb_info.spi_flash
         && let Some(window) = spi_flash.mmap_windows.first()
     {
@@ -918,6 +924,10 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
     crabefi::logger::init();
     apply_early_log_level(&cb_info);
 
+    #[cfg(target_arch = "aarch64")]
+    if let Some(uncached) = framebuffer_uncached {
+        log::info!("Framebuffer mapped non-cacheable: {}", uncached);
+    }
     #[cfg(target_arch = "aarch64")]
     if let Some(ram) = cb_info
         .memory_map

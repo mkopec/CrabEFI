@@ -31,6 +31,9 @@ _start:
     msr VBAR_EL2, x1
     isb
 
+    // The 2MB L2 table is only used when we build the page tables below.
+    mov x20, xzr
+
     // Check if EL2 MMU is already enabled (SCTLR_EL2.M, bit 0)
     mrs x1, SCTLR_EL2
     tbnz x1, #0, .Lmmu_done
@@ -50,7 +53,10 @@ _start:
     // -----------------------------------------------------------------
 
     // Set MAIR_EL2
-    mov x1, #0xFF00             // Attr1=0xFF (Normal WB), Attr0=0x00 (Device)
+    // Attr0=0x00 (Device), Attr1=0xFF (Normal WB), Attr2=0x44 (Normal NC,
+    // used by map_uncached() for buffers of non-snooping devices)
+    mov x1, #0xff00
+    movk x1, #0x44, lsl #16
     msr MAIR_EL2, x1
 
     // Set TCR_EL2: T0SZ=16 (48-bit VA), 4KB granule, Inner/Outer WB-WA cacheable
@@ -67,10 +73,10 @@ _start:
     msr TCR_EL2, x1
     isb
 
-    // Zero all page tables (L0 + 4 x L1 = 5 pages = 5 * 512 = 2560 entries)
+    // Zero all page tables (L0 + 4 x L1 + L2 = 6 pages = 6 * 512 entries)
     adrp x2, _el2_l0_table
     add x2, x2, :lo12:_el2_l0_table
-    mov x3, #(5 * 512)
+    mov x3, #(6 * 512)
 .Lzero_pt:
     str xzr, [x2], #8
     subs x3, x3, #1
@@ -126,6 +132,28 @@ _start:
     subs x3, x3, #1
     b.ne .Lfill_l1_low
 
+    // Map 2 - 3 GB, where DRAM starts on MediaTek SoCs, with 2MB blocks so
+    // the framebuffer can be made non-cacheable later (map_uncached()).
+    mov x20, xzr                // L2 table not in use
+    cmp x7, #2
+    b.hi .Lfill_l2_done
+    adrp x12, _el2_l2_table
+    add x12, x12, :lo12:_el2_l2_table
+    orr x4, x12, #0x3           // Valid + Table descriptor
+    str x4, [x11, #(2 * 8)]     // L1[2]
+    mov x13, #0x80000000        // Output address
+    mov x14, #0x200000          // 2MB increment
+    mov x3, #512
+.Lfill_l2:
+    mov x4, #0x705              // Normal WB block attrs
+    orr x4, x4, x13
+    str x4, [x12], #8
+    add x13, x13, x14
+    subs x3, x3, #1
+    b.ne .Lfill_l2
+    mov x20, #1                 // L2 table in use
+.Lfill_l2_done:
+
     // Entries 512..2047 (512GB - 2TB): Device (covers high MMIO, ECAM, PCI BARs)
     mov x3, #(3 * 512)
 .Lfill_l1_device:
@@ -176,6 +204,10 @@ _start:
     cmp x1, x2
     b.lt 1b
 2:
+
+    // Tell map_uncached() whether the 2MB L2 table is live (BSS is zeroed).
+    adrp x1, CRABEFI_EL2_L2_ACTIVE
+    str w20, [x1, :lo12:CRABEFI_EL2_L2_ACTIVE]
 
     // Restore coreboot table pointer as first argument
     mov x0, x19
