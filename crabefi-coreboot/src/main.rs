@@ -209,6 +209,10 @@ impl crabefi::Timer for CorebootTimer {
 /// Reset handler using architecture-specific reset mechanisms.
 struct CorebootReset;
 
+/// The devicetree coreboot passed, kept for devicetree fixups.
+static COREBOOT_FDT: crabefi::cell::LocalCell<Option<&'static [u8]>> =
+    crabefi::cell::LocalCell::new(None);
+
 /// Coreboot-specific lifecycle callbacks injected into the generic core.
 struct CorebootHooks;
 
@@ -222,6 +226,20 @@ impl crabefi::PlatformHooks for CorebootHooks {
 
         // CBMEM console is not runtime mapped; disable it before runtime use.
         cbmem_console::disable();
+    }
+
+    /// Give OS-supplied devicetrees coreboot's `/firmware/coreboot` node, so
+    /// the OS finds the coreboot tables (memory console, VPD) as it does with
+    /// the devicetree coreboot passed.
+    fn fixup_devicetree(&self, tree: &mut crabefi::fdt_tree::Tree) {
+        let Some(source) = COREBOOT_FDT.get().and_then(crabefi::fdt_tree::Tree::parse) else {
+            return;
+        };
+        match tree.copy_node(&source, "/firmware/coreboot") {
+            Ok(true) => log::info!("Devicetree fixup: added /firmware/coreboot"),
+            Ok(false) => {}
+            Err(error) => log::warn!("Devicetree fixup: /firmware/coreboot not added: {error:?}"),
+        }
     }
 
     fn firmware_settings_available(&self) -> bool {
@@ -1079,6 +1097,7 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
         }
     };
     let coreboot_fdt = coreboot_devicetree(&cb_info);
+    COREBOOT_FDT.set(coreboot_fdt);
     #[cfg(not(target_arch = "riscv64"))]
     let fdt_slice: Option<&[u8]> = coreboot_fdt;
 
