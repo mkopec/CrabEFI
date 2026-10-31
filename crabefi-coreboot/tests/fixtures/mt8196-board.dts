@@ -1,0 +1,162 @@
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+// Trimmed MT8196 board devicetree for the payload's board description
+// parser: the node shapes of mt8196-rauru-navi, plus a fingerprint EC and a
+// disabled bus the parser must skip. Rebuild with
+// `dtc -I dts -O dtb -o mt8196-board.dtb mt8196-board.dts`.
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+	compatible = "vendor,mt8196-board", "mediatek,mt8196";
+
+	pio: pinctrl@1002d000 {
+		compatible = "mediatek,mt8196-pinctrl";
+		reg = <0 0x1002d000 0 0x1000>;
+
+		i2c0_pins: i2c0-pins {
+			pins-bus {
+				pinmux = <0x6301 0x6401>;
+				bias-disable;
+				drive-strength = <4>;
+			};
+		};
+
+		trackpad_pins: trackpad-pins {
+			pins-int {
+				pinmux = <0x800>;
+				bias-disable;
+			};
+		};
+	};
+
+	i2c@13130000 {
+		compatible = "mediatek,mt8196-i2c", "mediatek,mt8188-i2c";
+		reg = <0 0x13130000 0 0x20000>, <0 0x16370000 0 0x10000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		clock-frequency = <400000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&i2c0_pins &trackpad_pins>;
+
+		trackpad@15 {
+			compatible = "elan,ekth3000";
+			reg = <0x15>;
+			interrupts-extended = <&pio 8 8>;
+			vcc-supply = <&pp3300_tchpad>;
+		};
+
+		trackpad@38 {
+			compatible = "hid-over-i2c";
+			reg = <0x38>;
+			hid-descr-addr = <0x20>;
+			interrupts-extended = <&pio 8 8>;
+			post-power-on-delay-ms = <200>;
+			vdd-supply = <&pp3300_tchpad>;
+		};
+	};
+
+	i2c@13930000 {
+		compatible = "mediatek,mt8196-i2c", "mediatek,mt8188-i2c";
+		reg = <0 0x13930000 0 0x20000>, <0 0x16380000 0 0x10000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		clock-frequency = <1000000>;
+
+		tpm@50 {
+			compatible = "google,ti50", "google,cr50";
+			reg = <0x50>;
+			interrupts-extended = <&pio 18 1>;
+		};
+	};
+
+	i2c@13940000 {
+		compatible = "mediatek,mt8196-i2c", "mediatek,mt8188-i2c";
+		reg = <0 0x13940000 0 0x20000>, <0 0x16390000 0 0x10000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		status = "disabled";
+
+		tpm@50 {
+			compatible = "google,ti50";
+			reg = <0x50>;
+		};
+	};
+
+	usb@16703e00 {
+		compatible = "mediatek,mt8196-mtu3", "mediatek,mtu3";
+		reg = <0 0x16701000 0 0x2dff>, <0 0x16703e00 0 0x100>;
+		reg-names = "mac", "ippc";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges = <0 0 0 0x16700000 0 0x3f00>;
+		dr_mode = "host";
+
+		usb@0 {
+			compatible = "mediatek,mt8196-xhci", "mediatek,mtk-xhci";
+			reg = <0 0 0 0x1000>;
+		};
+	};
+
+	ufshci@16810000 {
+		compatible = "mediatek,mt8196-ufshci";
+		reg = <0 0x16810000 0 0x2a00>;
+	};
+
+	spi@16120000 {
+		compatible = "mediatek,mt8196-spi";
+		reg = <0 0x16120000 0 0x1000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ec@0 {
+			compatible = "google,cros-ec-spi";
+			reg = <0>;
+		};
+	};
+
+	spi@16130000 {
+		compatible = "mediatek,mt8196-spi";
+		reg = <0 0x16130000 0 0x1000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ec@0 {
+			compatible = "google,cros-ec-spi";
+			reg = <0>;
+
+			keyboard-controller {
+				compatible = "google,cros-ec-keyb";
+				linux,keymap = <0x0001007d 0x0102001e 0x0300002a>;
+			};
+		};
+	};
+
+	spi@16340000 {
+		compatible = "mediatek,mt8196-nor", "mediatek,mt8186-nor";
+		reg = <0 0x16340000 0 0x1000>;
+		status = "disabled";
+	};
+
+	spmi@1c01a000 {
+		pmic@5 {
+			regulators@30 {
+				compatible = "mediatek,mt6373-regulator";
+
+				vfp {
+					regulator-min-microvolt = <1800000>;
+					regulator-always-on;
+				};
+
+				pp3300_tchpad: vcn33-2 {
+					regulator-min-microvolt = <3300000>;
+					regulator-always-on;
+				};
+
+				vcn18io {
+					regulator-min-microvolt = <1800000>;
+				};
+			};
+		};
+	};
+};

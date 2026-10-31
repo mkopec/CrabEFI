@@ -10,4 +10,5 @@ mod acpi;
 mod devicetree;
 mod framebuffer;
 mod memory;
+mod soc;
 mod tables;

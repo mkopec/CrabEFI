@@ -1296,6 +1296,10 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
         }
     }
 
+    // MT8196 board devices.
+    #[cfg(all(target_arch = "aarch64", feature = "mt8196"))]
+    mt8196::configure(&cb_info, &mut config);
+
     // init_platform() parses the FDT before adding its MMIO windows, including
     // on RISC-V where the PCIe window must not be guessed from SBSA defaults.
 
