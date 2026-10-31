@@ -412,9 +412,10 @@ impl crabefi::VariableStoreLocator for CorebootVariableStoreLocator {
     }
 }
 
-/// Coreboot SPI/FMAP implementation of the platform capsule backend.
+/// Coreboot FMAP implementation of the platform capsule backend.
 struct CorebootCapsuleBackend {
     firmware_info: Option<crabefi::FirmwareInfo>,
+    storage: Option<alloc::boxed::Box<dyn crabefi::FirmwareStorage>>,
     fmap_offset: Option<u64>,
     fmap_loaded: bool,
     fmap_regions: alloc::vec::Vec<crabefi::FmapRegion>,
@@ -427,9 +428,23 @@ impl CorebootCapsuleBackend {
     ) -> Self {
         Self {
             firmware_info,
+            storage: None,
             fmap_offset: boot_media.map(|media| media.fmap_offset),
             fmap_loaded: false,
             fmap_regions: alloc::vec::Vec::new(),
+        }
+    }
+
+    fn with_storage<R>(
+        &mut self,
+        operation: impl FnOnce(&mut dyn crabefi::FirmwareStorage) -> R,
+    ) -> Option<R> {
+        if let Some(storage) = self.storage.as_deref_mut() {
+            Some(operation(storage))
+        } else {
+            crabefi::efi::varstore::with_spi_storage_mut(|storage| {
+                operation(storage.controller_mut())
+            })
         }
     }
 
@@ -438,10 +453,10 @@ impl CorebootCapsuleBackend {
             return;
         }
         self.fmap_loaded = true;
-        let parsed = crabefi::efi::varstore::with_spi_storage_mut(|storage| {
-            fmap::read_fmap(storage.controller_mut(), self.fmap_offset)
-        })
-        .flatten();
+        let fmap_offset = self.fmap_offset;
+        let parsed = self
+            .with_storage(|storage| fmap::read_fmap(storage, fmap_offset))
+            .flatten();
         let Some(parsed) = parsed else {
             log::warn!("Capsule backend could not load FMAP");
             return;
@@ -484,15 +499,12 @@ impl crabefi::CapsuleBackend for CorebootCapsuleBackend {
         if offset as u64 + data.len() as u64 > u64::from(region.size) {
             return Err(crabefi::StorageError::InvalidArgument);
         }
-        crabefi::efi::varstore::with_spi_storage_mut(|storage| {
-            let controller = storage.controller_mut();
-            crabefi::FirmwareStorage::enable_writes(controller)?;
-            crabefi::FirmwareStorage::erase(
-                controller,
-                u64::from(region.offset),
-                u64::from(region.size),
-            )?;
-            crabefi::FirmwareStorage::write(controller, u64::from(write_offset), data)
+        let region_offset = u64::from(region.offset);
+        let region_size = u64::from(region.size);
+        self.with_storage(|storage| {
+            storage.enable_writes()?;
+            storage.erase(region_offset, region_size)?;
+            storage.write(u64::from(write_offset), data)
         })
         .ok_or(crabefi::StorageError::NotInitialized)?
     }
@@ -1134,7 +1146,7 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
         discover_mmio: cfg!(any(target_arch = "aarch64", target_arch = "riscv64")),
         firmware_info,
         capsule_regions: &capsule_regions[..capsule_count],
-        capsule_backend: Some(&mut capsule_backend),
+        capsule_backend: None, // Attached after post-heap storage discovery.
         hooks: Some(&hooks),
         rng: None,
         ecam_regions: &[], // ACPI/FDT discovery is selected by the library below.
@@ -1280,6 +1292,8 @@ pub extern "C" fn rust_main(coreboot_table_ptr: u64) -> ! {
     // MT8196 board devices and variable store.
     #[cfg(all(target_arch = "aarch64", feature = "mt8196"))]
     mt8196::configure(&cb_info, &mut config);
+
+    config.capsule_backend = Some(&mut capsule_backend);
 
     // init_platform() parses the FDT before adding its MMIO windows, including
     // on RISC-V where the PCIe window must not be guessed from SBSA defaults.
