@@ -1236,7 +1236,8 @@ pub struct RuntimePlatformConfig<'a> {
     pub time: crabefi_runtime_abi::RuntimeTimeConfig,
     /// Runtime reset mechanism.
     pub reset: crabefi_runtime_abi::RuntimeResetConfig,
-    /// Explicit MMIO ranges that remain reachable after EBS.
+    /// Explicit MMIO ranges that remain reachable after EBS. The loader
+    /// describes each as runtime MMIO in the memory map.
     pub external_ranges: &'a [crabefi_runtime_abi::RuntimeExternalRange],
     /// Optional, exclusively owned warm-reset-preserved deferred storage.
     pub deferred_buffer: DeferredBufferConfig,
