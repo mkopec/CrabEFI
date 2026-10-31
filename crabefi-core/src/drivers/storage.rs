@@ -45,6 +45,14 @@ pub unsafe fn register_platform_block_devices(devices: &mut [&mut dyn BlockDevic
     });
 }
 
+/// Add one platform driver's block device, e.g. from `PlatformHooks::init_devices`.
+/// Returns `false` when the table is full. A later non-empty
+/// [`register_platform_block_devices`] call replaces the table.
+pub fn add_platform_block_device(device: &'static mut dyn BlockDevice) -> bool {
+    let device: *mut dyn BlockDevice = device;
+    PLATFORM_BLOCK_DEVICES.with_mut(|registered| registered.push(device).is_ok())
+}
+
 /// Identity of one storage device across menu, boot and EFI protocols.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageId {

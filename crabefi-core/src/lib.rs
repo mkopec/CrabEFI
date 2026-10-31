@@ -575,6 +575,10 @@ pub fn init_platform(mut config: PlatformConfig) -> ! {
     log::info!("CrabEFI initialized successfully!");
     log::info!("EFI System Table at: {:p}", efi::get_system_table());
 
+    if let Some(hooks) = config.hooks {
+        hooks.init_devices();
+    }
+
     // ---- 12. Discover PCI ECAM and initialize PCI ----
     //
     // Priority: explicit platform regions, then all ACPI MCFG allocations,
