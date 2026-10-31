@@ -134,7 +134,7 @@ impl super::XhciController {
         let mmio_base = pci_dev.mmio_base().ok_or(XhciError::NotReady)?;
         // Enable the device (bus master + memory space).
         pci::enable_device(pci_dev);
-        Self::new_at(mmio_base, Attachment::Pci(pci_dev.address)).await
+        Self::new_at(mmio_base, Attachment::Pci(pci_dev.address), None).await
     }
 
     /// Initialize a platform xHCI controller without PCI configuration space.
@@ -157,7 +157,7 @@ impl super::XhciController {
         if !super::mmio_dma_supported(domain) {
             return Err(XhciError::InvalidParameter);
         }
-        Self::new_at(mmio_base, Attachment::Mmio(domain)).await
+        Self::new_at(mmio_base, Attachment::Mmio(domain), None).await
     }
 
     /// Initialize MMIO xHCI for control/bulk transfers only.
@@ -172,10 +172,32 @@ impl super::XhciController {
         if !super::mmio_dma_supported(domain) {
             return Err(XhciError::InvalidParameter);
         }
-        Self::new_at(mmio_base, Attachment::MmioBulkOnly(domain)).await
+        Self::new_at(mmio_base, Attachment::MmioBulkOnly(domain), None).await
     }
 
-    async fn new_at(mmio_base: u64, attachment: Attachment) -> Result<Self, XhciError> {
+    /// Initialize control/bulk MMIO xHCI with a platform host-ready handshake.
+    /// The callback runs after the controller starts, before device enumeration.
+    /// On callback failure the controller is stopped before returning.
+    ///
+    /// # Safety
+    /// All requirements of [`Self::new_mmio`] apply. The callback must only
+    /// access platform-owned hardware and establish any required VBUS readiness.
+    pub async unsafe fn new_mmio_bulk_only_with_ready(
+        mmio_base: u64,
+        domain: crate::efi::dma::DmaDomain,
+        on_ready: fn() -> Result<(), XhciError>,
+    ) -> Result<Self, XhciError> {
+        if !super::mmio_dma_supported(domain) {
+            return Err(XhciError::InvalidParameter);
+        }
+        Self::new_at(mmio_base, Attachment::MmioBulkOnly(domain), Some(on_ready)).await
+    }
+
+    async fn new_at(
+        mmio_base: u64,
+        attachment: Attachment,
+        on_ready: Option<fn() -> Result<(), XhciError>>,
+    ) -> Result<Self, XhciError> {
         // SAFETY: the PCI caller supplies a mapped BAR; the MMIO caller
         // guarantees a mapped, accessible controller for the firmware lifetime.
         let mmio = unsafe {
@@ -246,13 +268,43 @@ impl super::XhciController {
         };
 
         controller.init().await?;
+        controller.log_root_ports("after-run");
+        if let Some(on_ready) = on_ready
+            && let Err(error) = on_ready()
+        {
+            controller.cleanup();
+            return Err(error);
+        }
 
         // Give USB devices time to connect and be detected
         exec::sleep_ms(50).await;
+        controller.log_root_ports("before-enumeration");
 
         controller.enumerate_ports().await?;
+        controller.log_root_ports("after-enumeration");
 
         Ok(controller)
+    }
+
+    fn log_root_ports(&self, phase: &str) {
+        if !matches!(self.attachment, Attachment::MmioBulkOnly(_)) {
+            return;
+        }
+        let operational = u64::from(self.mmio.read8(0));
+        for port in 0..self.num_ports {
+            let raw = self
+                .mmio
+                .read32(operational + 0x400 + u64::from(port) * 0x10);
+            log::debug!(
+                "xHCI {phase} root port {}: PORTSC={raw:#010x} CCS={} PED={} PP={} PLS={} speed={}",
+                port + 1,
+                raw & 1,
+                (raw >> 1) & 1,
+                (raw >> 9) & 1,
+                (raw >> 5) & 0xf,
+                (raw >> 10) & 0xf,
+            );
+        }
     }
 
     #[inline]
