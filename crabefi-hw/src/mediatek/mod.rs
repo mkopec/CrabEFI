@@ -3,3 +3,4 @@
 
 pub mod i2c;
 pub mod nor;
+pub mod spi;
