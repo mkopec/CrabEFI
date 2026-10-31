@@ -11,6 +11,7 @@ pub mod capsule;
 #[cfg(any(feature = "secure-boot", feature = "tpm"))]
 pub mod digest;
 pub mod dma;
+pub mod dma_pool;
 pub(crate) mod dma_range;
 pub mod esrt;
 pub mod guid_fmt;
@@ -982,6 +983,32 @@ pub fn allocate_pages(num_pages: u64) -> Option<&'static mut [u8]> {
         Some(unsafe { core::slice::from_raw_parts_mut(addr as *mut u8, size) })
     } else {
         None
+    }
+}
+
+/// Allocate zeroed pages that DMA masters read or write directly (rings,
+/// contexts, descriptor tables, bounce buffers). Comes from the platform's
+/// non-cacheable pool when one is registered (non-snooping DMA with cached
+/// RAM), otherwise from ordinary memory below 4 GiB.
+pub fn allocate_dma_pages(num_pages: u64) -> Option<&'static mut [u8]> {
+    let size = usize::try_from(num_pages).ok()? * allocator::PAGE_SIZE_USIZE;
+    if let Some(address) = dma_pool::allocate(num_pages) {
+        // SAFETY: the pool returned exclusively owned, zeroed pages.
+        return Some(unsafe { core::slice::from_raw_parts_mut(address as *mut u8, size) });
+    }
+    if dma_pool::active() {
+        log::error!("DMA pool exhausted ({num_pages} pages requested)");
+        return None;
+    }
+    let memory = allocate_pages_below_4g(num_pages)?;
+    memory.fill(0);
+    Some(memory)
+}
+
+/// Free pages from [`allocate_dma_pages`].
+pub fn free_dma_pages(memory: &mut [u8], num_pages: u64) {
+    if !dma_pool::free(memory.as_ptr() as u64, num_pages) {
+        free_pages(memory, num_pages);
     }
 }
 
