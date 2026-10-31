@@ -25,6 +25,9 @@ fn scratchpad_address(base: u64, page_size: u32) -> u64 {
     (base + mask) & !mask
 }
 
+/// Pages of the control-transfer data buffer (64 KiB).
+pub(super) const CONTROL_BUFFER_PAGES: u64 = 16;
+
 impl super::XhciController {
     fn usb3_protocols(
         mmio_base: u64,
@@ -194,6 +197,7 @@ impl super::XhciController {
             dcbaa: 0,
             num_scratchpad_bufs,
             cmd_ring: TrbRing::empty(), // Will be initialized in init()
+            control_buffer: 0,
             erst: 0,
             event_ring: TrbRing::empty(), // Will be initialized in init()
             slots,
@@ -426,6 +430,9 @@ impl super::XhciController {
         let cmd_ring_mem = efi::allocate_dma_pages(1).ok_or(XhciError::AllocationFailed)?;
         let cmd_ring_base = cmd_ring_mem.as_ptr() as u64;
         self.cmd_ring = TrbRing::new(cmd_ring_base, 256);
+        self.control_buffer = efi::allocate_dma_pages(CONTROL_BUFFER_PAGES)
+            .ok_or(XhciError::AllocationFailed)?
+            .as_ptr() as u64;
 
         // Set command ring pointer
         self.registers.operational.crcr.update_volatile(|crcr| {

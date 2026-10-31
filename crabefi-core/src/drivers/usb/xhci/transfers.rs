@@ -37,6 +37,16 @@ impl super::XhciController {
 
         let is_in = (request_type & 0x80) != 0;
         let data_len = data.as_ref().map(|h| h.len()).unwrap_or(0);
+        let control_buffer = self.control_buffer;
+        if data_len > (super::init::CONTROL_BUFFER_PAGES * 4096) as usize || control_buffer == 0 {
+            return Err(XhciError::InvalidParameter);
+        }
+        if let Some(out) = data.as_ref().filter(|_| !is_in) {
+            // SAFETY: the controller-owned DMA buffer holds 64 KiB.
+            unsafe {
+                core::ptr::copy_nonoverlapping(out.as_ptr(), control_buffer as *mut u8, out.len())
+            };
+        }
 
         // Save cycle state before enqueuing the first (deferred) TRB
         let first_trb_cycle = ring.cycle;
@@ -65,11 +75,11 @@ impl super::XhciController {
         // before the Status Stage's IOC event, but wait_transfer_completion only
         // expects 1 event. The orphaned Status event would corrupt later transfers.
         // EDK2 also relies solely on IOC on the Status Stage TRB.
-        if let Some(data_buf) = data {
+        if data_len != 0 {
             let mut data_trb = transfer::DataStage::new();
             data_trb
-                .set_data_buffer_pointer(data_buf.as_ptr() as u64)
-                .set_trb_transfer_length(data_buf.len() as u32)
+                .set_data_buffer_pointer(control_buffer)
+                .set_trb_transfer_length(data_len as u32)
                 .set_direction(if is_in {
                     transfer::Direction::In
                 } else {
@@ -98,8 +108,20 @@ impl super::XhciController {
         // Wait for completion
         match self.wait_transfer_completion(slot_id, 0, 1) {
             Ok(total_residual) => {
-                // Return transfer length
-                Ok(data_len.saturating_sub(total_residual as usize))
+                let transferred = data_len.saturating_sub(total_residual as usize);
+                if let Some(input) = data.filter(|_| is_in) {
+                    barrier::consume_from_device();
+                    // SAFETY: the controller wrote at most `data_len` bytes
+                    // of its DMA buffer.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            control_buffer as *const u8,
+                            input.as_mut_ptr(),
+                            transferred,
+                        )
+                    };
+                }
+                Ok(transferred)
             }
             Err(XhciError::StallError) => {
                 // Control endpoint stalled - reset it
