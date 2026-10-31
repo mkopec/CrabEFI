@@ -55,6 +55,14 @@ fn main() {
         let payload_base =
             std::env::var("PAYLOAD_BASE").unwrap_or_else(|_| "0x10022000000".to_string());
         println!("cargo:rustc-link-arg-bin=crabefi=--defsym=PAYLOAD_BASE={payload_base}");
+
+        // Gigabytes from address 0 mapped as Device memory when the payload
+        // builds its own page tables: the I/O space below DRAM. One by
+        // default (QEMU); boards with MMIO up to DRAM at 2GB, such as
+        // MediaTek SoCs, build with LOW_DEVICE_GB=2.
+        println!("cargo:rerun-if-env-changed=LOW_DEVICE_GB");
+        let low_device_gb = std::env::var("LOW_DEVICE_GB").unwrap_or_else(|_| "1".to_string());
+        println!("cargo:rustc-link-arg-bin=crabefi=--defsym=LOW_DEVICE_GB={low_device_gb}");
     } else if target.starts_with("riscv64") {
         let ld = manifest_path.join("riscv64-coreboot.ld");
         println!("cargo:rerun-if-changed={}", ld.display());

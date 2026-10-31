@@ -105,27 +105,26 @@ _start:
     subs x3, x3, #1
     b.ne .Lfill_l0
 
-    // Fill all 4 L1 tables with 1GB block descriptors.
-    // Total: 4 * 512 = 2048 entries covering 0 - 2 TB.
-    // L1[0] of the first table is Device (I/O below 1GB), rest Normal WB.
+    // Fill the first L1 table (0 - 512 GB) with 1GB block descriptors.
+    // The lowest LOW_DEVICE_GB gigabytes are Device (I/O space, one on
+    // QEMU, two on MediaTek SoCs), the rest Normal WB.
     mov x2, x11                 // Start of L1 tables
     mov x5, xzr                 // Current physical address = 0
     mov x6, #0x40000000         // 1GB increment
-
-    // First entry: Device block for 0x0 - 0x3FFFFFFF (I/O space)
-    mov x4, #0x641              // Device-nGnRnE
-    str x4, [x2], #8
-    add x5, x5, x6
-
-    // Entries 1..511 (1GB - 512GB): Normal WB (covers DRAM)
-    mov x3, #511
-.Lfill_l1_normal:
+    ldr x7, =LOW_DEVICE_GB
+    lsl x8, x7, #30             // End of the Device range
+    mov x3, #512
+.Lfill_l1_low:
+    mov x4, #0x641              // Device-nGnRnE block
+    cmp x5, x8
+    b.lo .Lfill_l1_low_attr
     mov x4, #0x705              // Normal WB block attrs
+.Lfill_l1_low_attr:
     orr x4, x4, x5              // | output address
     str x4, [x2], #8
     add x5, x5, x6
     subs x3, x3, #1
-    b.ne .Lfill_l1_normal
+    b.ne .Lfill_l1_low
 
     // Entries 512..2047 (512GB - 2TB): Device (covers high MMIO, ECAM, PCI BARs)
     mov x3, #(3 * 512)
