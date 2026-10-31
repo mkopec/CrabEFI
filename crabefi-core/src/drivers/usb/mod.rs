@@ -319,6 +319,12 @@ pub unsafe fn init_mmio_xhci(base: u64, domain: crate::efi::dma::DmaDomain) -> R
     )
 }
 
+/// Register an initialized MMIO controller in the shared USB registry.
+#[allow(clippy::result_unit_err)]
+pub fn register_mmio_controller(base: u64, controller: InitializedController) -> Result<(), ()> {
+    register_at(&format_args!("MMIO {base:#x}"), controller)
+}
+
 fn register_at(
     address: &dyn core::fmt::Display,
     controller: InitializedController,
