@@ -100,13 +100,15 @@ pub const MAX_SLOTS: usize = 16;
 pub(super) enum Attachment {
     Pci(PciAddress),
     Mmio(DmaDomain),
+    /// No periodic endpoints until the platform scheduler is implemented.
+    MmioBulkOnly(DmaDomain),
 }
 
 impl Attachment {
     fn dma_domain(self) -> Option<DmaDomain> {
         match self {
             Self::Pci(address) => pci::dma_domain(address),
-            Self::Mmio(domain) => Some(domain),
+            Self::Mmio(domain) | Self::MmioBulkOnly(domain) => Some(domain),
         }
     }
 }
@@ -261,7 +263,7 @@ impl XhciController {
     pub fn pci_address(&self) -> Option<PciAddress> {
         match self.attachment {
             Attachment::Pci(address) => Some(address),
-            Attachment::Mmio(_) => None,
+            Attachment::Mmio(_) | Attachment::MmioBulkOnly(_) => None,
         }
     }
 

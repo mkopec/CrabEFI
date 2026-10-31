@@ -160,6 +160,21 @@ impl super::XhciController {
         Self::new_at(mmio_base, Attachment::Mmio(domain)).await
     }
 
+    /// Initialize MMIO xHCI for control/bulk transfers only.
+    ///
+    /// # Safety
+    /// All requirements of [`Self::new_mmio`] apply. This is intended for
+    /// platform bring-up before vendor periodic scheduling is supported.
+    pub async unsafe fn new_mmio_bulk_only(
+        mmio_base: u64,
+        domain: crate::efi::dma::DmaDomain,
+    ) -> Result<Self, XhciError> {
+        if !super::mmio_dma_supported(domain) {
+            return Err(XhciError::InvalidParameter);
+        }
+        Self::new_at(mmio_base, Attachment::MmioBulkOnly(domain)).await
+    }
+
     async fn new_at(mmio_base: u64, attachment: Attachment) -> Result<Self, XhciError> {
         // SAFETY: the PCI caller supplies a mapped BAR; the MMIO caller
         // guarantees a mapped, accessible controller for the firmware lifetime.
