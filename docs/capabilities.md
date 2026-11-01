@@ -183,7 +183,8 @@ limits:
   every controller wait has a poll limit. One call scans the store once and
   programs one record.
 - **Exclusive device.** The platform must keep the OS off the controller after
-  ExitBootServices. The image restores any clock gates it opened.
+  ExitBootServices; MT8196 marks the controller's node `reserved` in OS
+  devicetrees. The image restores any clock gates it opened.
 
 This is not power-loss-atomic beyond the record protocol, and it needs
 hardware validation per board like any other mechanism.

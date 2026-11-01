@@ -30,6 +30,9 @@ mod platform {
     use super::{dt, ec, i2c, nor, ufs, usb};
     use crate::tables::CorebootInfo;
 
+    /// Whether the runtime image writes the variable store on the NOR.
+    static RUNTIME_NOR: crabefi::cell::LocalCell<bool> = crabefi::cell::LocalCell::new(false);
+
     /// The DMA masters (xHCI, UFS, I2C APDMA) only reach the low 4 GiB:
     /// keep firmware allocations low (high RAM stays in the map for the OS).
     /// Runs after the page allocator is up and before the heap.
@@ -64,14 +67,26 @@ mod platform {
             .and_then(|media| nor::variable_region(media.boot_media_size, Some(media.fmap_offset)))
         {
             Some(region) => {
-                // The OS does not drive this flash (its DT node is disabled),
-                // so runtime SetVariable writes it in place.
+                // Runtime SetVariable writes this flash in place; the OS's
+                // devicetree gets the controller reserved (fixup_devicetree).
                 (config.runtime.nvram, config.runtime.external_ranges) = region.runtime_config();
+                RUNTIME_NOR.set(true);
                 *capsule_storage = Some(region.firmware_storage());
                 crabefi::VariableStorage::Platform(region)
             }
             None => crabefi::VariableStorage::None,
         };
+    }
+
+    /// Keep the OS off the NOR controller the runtime image writes
+    /// (PlatformHooks::fixup_devicetree).
+    pub fn fixup_devicetree(tree: &mut crabefi::fdt_tree::Tree) {
+        if RUNTIME_NOR.get() {
+            match dt::reserve_nor(tree) {
+                0 => log::warn!("Devicetree fixup: no SPI NOR controller node to reserve"),
+                _ => log::info!("Devicetree fixup: SPI NOR controller reserved for UEFI variables"),
+            }
+        }
     }
 
     /// Bring up the boot devices (PlatformHooks::init_devices).

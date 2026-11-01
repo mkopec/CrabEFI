@@ -227,6 +227,25 @@ fn parse(dt: &fdt::Fdt<'_>) -> Board {
     board
 }
 
+/// Mark the SPI NOR controller `reserved` in an OS devicetree and return
+/// how many nodes were marked. Runtime SetVariable writes the variable store
+/// through it, so the OS must not drive it; the devicetree specification's
+/// `reserved` is "operational, but should not be used" because another
+/// software component owns it.
+pub fn reserve_nor(tree: &mut crabefi::fdt_tree::Tree) -> usize {
+    fn walk(node: &mut crabefi::fdt_tree::Node) -> usize {
+        let nor = node.property("compatible").is_some_and(|list| {
+            list.split(|&byte| byte == 0)
+                .any(|value| value == b"mediatek,mt8186-nor")
+        });
+        if nor {
+            node.set_property("status", b"reserved\0");
+        }
+        usize::from(nor) + node.children.iter_mut().map(walk).sum::<usize>()
+    }
+    walk(&mut tree.root)
+}
+
 fn parse_i2c(dt: &fdt::Fdt<'_>, node: Node<'_, '_>, pio: Option<u32>) -> Option<I2cBus> {
     let regs = regs64(node);
     let (&(base, _), &(dma, _)) = (regs.first()?, regs.get(1)?);

@@ -92,3 +92,15 @@ fn missing_or_invalid_devicetree_describes_no_devices() {
     init(Some(BOARD_DTB));
     assert_eq!(super::board().i2c.len(), 2);
 }
+
+#[test]
+fn os_devicetrees_get_the_nor_controller_reserved() {
+    let mut tree = crabefi::fdt_tree::Tree::parse(BOARD_DTB).unwrap();
+    assert_eq!(reserve_nor(&mut tree), 1);
+    let nor = tree.node("/spi@16340000").unwrap();
+    assert_eq!(nor.property("status"), Some(&b"reserved\0"[..]));
+    // Idempotent, and nothing else changed status.
+    let again = tree.clone();
+    assert_eq!(reserve_nor(&mut tree), 1);
+    assert!(tree == again);
+}

@@ -239,10 +239,12 @@ impl crabefi::PlatformHooks for CorebootHooks {
         cbmem_console::disable();
     }
 
-    /// Give OS-supplied devicetrees coreboot's `/firmware/coreboot` node, so
-    /// the OS finds the coreboot tables (memory console, VPD) as it does with
-    /// the devicetree coreboot passed.
+    /// Apply the SoC's fixups and give OS-supplied devicetrees coreboot's
+    /// `/firmware/coreboot` node, so the OS finds the coreboot tables (memory
+    /// console, VPD) as it does with the devicetree coreboot passed.
     fn fixup_devicetree(&self, tree: &mut crabefi::fdt_tree::Tree) {
+        #[cfg(all(target_arch = "aarch64", feature = "mt8196"))]
+        mt8196::fixup_devicetree(tree);
         let Some(source) = COREBOOT_FDT.get().and_then(crabefi::fdt_tree::Tree::parse) else {
             return;
         };
