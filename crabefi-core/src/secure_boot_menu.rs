@@ -270,8 +270,19 @@ pub fn show_secure_boot_menu() {
 }
 
 /// Shared action for graphical and text setup; report persistence failures.
+///
+/// PCR 7 is measured before setup runs, so a change of enforcement cannot
+/// take effect in this boot: the saved preference is applied by resetting,
+/// and the next boot both enforces and measures it. A preference that only
+/// waits for PK enrollment changes nothing yet and needs no reset.
 pub(crate) fn toggle_secure_boot_action() -> (&'static str, bool) {
+    let enforcing = auth::is_secure_boot_enabled();
     match auth::toggle_secure_boot() {
+        Ok(state) if state.enforcing != enforcing => {
+            log::warn!("Secure Boot enforcement changed; resetting so PCR 7 matches");
+            delay_ms(500);
+            crate::reset_system()
+        }
         Ok(state) if !state.requested => ("Secure Boot disabled", true),
         Ok(state) if state.enforcing => ("Secure Boot enabled", true),
         Ok(_) => ("Secure Boot enabled; awaiting PK enrollment", true),
